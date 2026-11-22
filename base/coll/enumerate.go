@@ -1,0 +1,228 @@
+package coll
+
+import (
+	"fmt"
+
+	"github.com/x64c/pola/base/model"
+)
+
+// EnumerateToSlice iterates over every model in the collection and calls yield for each.
+// Every model contributes exactly one value. No skipping.
+// Conceptually equivalent to: [yield(m) for m in c].
+func (c *Collection[MP, ID]) EnumerateToSlice[V any](
+	yield func(MP) V,
+) []V {
+	size := c.Len()
+	// new slice with the fixed length
+	sl := make([]V, size)
+	// With the fixed length, we don't use ForEach to avoid sl = append(sl, v) for better performance
+	if c.order != nil {
+		i := 0
+		for _, id := range c.order {
+			if mp, ok := c.itemsMap[id]; ok {
+				sl[i] = yield(mp)
+				i++
+			}
+		}
+		return sl[:i] // handles the skipped gracefully
+	}
+	i := 0
+	for _, mp := range c.itemsMap {
+		sl[i] = yield(mp)
+		i++
+	}
+	return sl[:i]
+}
+
+// EnumerateToMap iterates over every model in the collection and calls yield for each.
+// Every model contributes exactly one key–value pair. No skipping.
+// Conceptually equivalent to: {k: v for m in c}.
+func (c *Collection[MP, ID]) EnumerateToMap[K comparable, V any](
+	yield func(MP) (K, V),
+) map[K]V {
+	m := make(map[K]V, c.Len()) // new map
+	c.ForEachUnorderly(func(mp MP) {
+		k, v := yield(mp)
+		m[k] = v
+	})
+	return m
+}
+
+// CollectToSlice iterates over the collection and calls yield for each model.
+// If yield returns nil, the element is skipped (conditional yield).
+// Returns a slice of yielded values.
+// Equivalent to a list comprehension: [yield(m) for m in c if yield(m) != nil].
+func (c *Collection[MP, ID]) CollectToSlice[V any](
+	yield func(MP) *V,
+) []V {
+	sl := make([]V, 0, c.Len()) // new slice
+	c.ForEach(func(mp MP) {
+		if vp := yield(mp); vp != nil {
+			sl = append(sl, *vp)
+		}
+	})
+	return sl
+}
+
+// CollectToMap iterates over the collection and calls yield for each model.
+// If yield returns nil, the element is skipped (conditional yield).
+// The yielded key–value pair determines each map entry.
+// ToDo: Review Wrong Result due to Pointer Caching
+func (c *Collection[MP, ID]) CollectToMap[K comparable, V any](
+	yield func(MP) (*K, *V),
+) map[K]V {
+	m := make(map[K]V, c.Len()) // new map
+	c.ForEachUnorderly(func(mp MP) {
+		if kp, vp := yield(mp); kp != nil && vp != nil {
+			m[*kp] = *vp
+		}
+	})
+	return m
+}
+
+func (c *Collection[MP, ID]) CollectUniqueToSlice[V comparable](
+	yield func(MP) V,
+) []V {
+	sl := make([]V, 0, c.Len())
+	seen := make(map[V]struct{}, c.Len())
+	if c.IsOrdered() {
+		// Ordered iteration: preserve first occurrence order
+		for _, id := range c.order {
+			item, ok := c.itemsMap[id]
+			if !ok {
+				continue
+			}
+			v := yield(item)
+			if _, exists := seen[v]; !exists {
+				seen[v] = struct{}{}
+				sl = append(sl, v)
+			}
+		}
+		return sl
+	}
+	// Unordered
+	for _, item := range c.itemsMap {
+		v := yield(item)
+		if _, exists := seen[v]; !exists {
+			seen[v] = struct{}{}
+			sl = append(sl, v)
+		}
+	}
+	return sl
+}
+
+func (c *Collection[MP, ID]) CollectUniqueToSliceWithSkip[V comparable](
+	yield func(MP) V,
+	skip func(V) bool, // nil = no skip rule
+) []V {
+	sl := make([]V, 0, c.Len())
+	seen := make(map[V]struct{}, c.Len())
+	if c.IsOrdered() {
+		for _, id := range c.order {
+			item, ok := c.itemsMap[id]
+			if !ok {
+				continue
+			}
+			v := yield(item)
+			if skip != nil && skip(v) {
+				continue
+			}
+			if _, exists := seen[v]; exists {
+				continue
+			}
+			seen[v] = struct{}{}
+			sl = append(sl, v)
+		}
+		return sl
+	}
+	// unordered
+	for _, item := range c.itemsMap {
+		v := yield(item)
+		if skip != nil && skip(v) {
+			continue
+		}
+		if _, exists := seen[v]; exists {
+			continue
+		}
+		seen[v] = struct{}{}
+		sl = append(sl, v)
+	}
+	return sl
+}
+
+// BuildUnorderedCollectionFrom constructs a new unordered collection
+// by applying yield to each entity in the source collection.
+// If yield returns nil, that entity is skipped.
+// The resulting collection does not preserve iteration order.
+func (src *Collection[SP, SID]) BuildUnorderedCollectionFrom[
+	NP model.Identifiable[NID],
+	NID comparable,
+](
+	yield func(SP) NP,
+	skip func(NP) bool,
+) *Collection[NP, NID] {
+	if src == nil {
+		return nil
+	}
+	newColl := NewEmptyUnorderedCollection[NP, NID]()
+	if skip != nil {
+		for _, sp := range src.itemsMap {
+			np := yield(sp)
+			if !skip(np) {
+				newColl.AddIfNew(np)
+			}
+		}
+		return newColl
+	}
+
+	for _, sp := range src.itemsMap {
+		np := yield(sp)
+		newColl.AddIfNew(np)
+	}
+	return newColl
+}
+
+// BuildOrderedCollectionFrom builds a new ordered collection by applying yield
+// to each item of src, in src's order; skip (nil = none) drops a built item, and
+// a built item whose ID is already present is dropped too (the first is kept).
+// src must be ordered — its order is the only order this build has: Sort an
+// unordered src first, or use BuildUnorderedCollectionFrom.
+func (src *Collection[SP, SID]) BuildOrderedCollectionFrom[
+	NP model.Identifiable[NID],
+	NID comparable,
+](
+	yield func(SP) NP,
+	skip func(NP) bool,
+) (*Collection[NP, NID], error) {
+	if src == nil {
+		return nil, nil
+	}
+	if !src.IsOrdered() {
+		return nil, fmt.Errorf("coll: BuildOrderedCollectionFrom needs an ordered source — Sort it first, or use BuildUnorderedCollectionFrom")
+	}
+	newColl := NewEmptyOrderedCollection[NP, NID]()
+
+	if skip != nil {
+		for _, id := range src.order {
+			sp, ok := src.itemsMap[id]
+			if !ok {
+				continue
+			}
+			np := yield(sp)
+			if !skip(np) {
+				newColl.AddIfNew(np)
+			}
+		}
+		return newColl, nil
+	}
+
+	for _, id := range src.order {
+		sp, ok := src.itemsMap[id]
+		if !ok {
+			continue
+		}
+		np := yield(sp)
+		newColl.AddIfNew(np)
+	}
+	return newColl, nil
+}

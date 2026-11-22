@@ -1,0 +1,127 @@
+package handlerwrappers
+
+import (
+	"fmt"
+	"net/http"
+
+	"github.com/x64c/pola/base/errs"
+	"github.com/x64c/pola/base/framework"
+	"github.com/x64c/pola/base/security"
+	"github.com/x64c/pola/base/web/responses"
+	"github.com/x64c/pola/base/web/session"
+	"github.com/x64c/pola/base/web/session/bearer"
+)
+
+// BearerUserSession validates "Authorization: Bearer ..." against KVDB,
+// requires the session to be user-bound, optionally restricts to specific
+// session groups, attaches *bearer.UserSessionData[UID] to ctx, and forwards.
+//
+// Returns 401 if the token is missing or invalid. Returns 403 if the session is
+// userless (wrong shape) or its group isn't in AllowedGroups.
+type BearerUserSession[UID comparable] struct {
+	AppProvider framework.AppProviderFunc
+	// ParseUID converts the stored identity into the app's UID type. What is
+	// stored is always a string — that is what a KVDB holds — so this is where
+	// a string becomes an identity.
+	//
+	// It MUST return an error for any string that does not name one, the empty
+	// string included. Nothing else can make that judgement: only the app knows
+	// what its UID type admits. The userless check below is not that judgement —
+	// it asks which KIND of session arrived, since bearer has userless ones and
+	// this wrapper requires user-bound.
+	ParseUID      func(string) (UID, error)
+	AllowedGroups []string // empty = accept any group from config
+}
+
+func (m *BearerUserSession[UID]) Wrap(inner http.Handler) (http.Handler, error) {
+	appCore := m.AppProvider().AppCore()
+	// Wrap runs at boot, before StartServices admits anything, so the manager
+	// is reached on the NODE plane — the handle would refuse Get() here. The
+	// per-request gate below still asks the handle.
+	sessSvc, _ := appCore.SessionHandle().Node().Service().(*session.Service)
+	if sessSvc == nil || sessSvc.BearerSessionManager == nil {
+		return nil, fmt.Errorf("BearerUserSession: bearer session manager missing — prepare it before wiring this middleware")
+	}
+	sessHandle := appCore.SessionHandle()
+	mgr := sessSvc.BearerSessionManager
+
+	// Boot-time: build allowed-groups lookup map once, captured in closure.
+	var allowedGroupsSet map[string]struct{}
+	if len(m.AllowedGroups) == 0 {
+		allowedGroupsSet = make(map[string]struct{}, len(mgr.GroupConfs))
+		for groupName := range mgr.GroupConfs {
+			allowedGroupsSet[groupName] = struct{}{}
+		}
+	} else {
+		allowedGroupsSet = make(map[string]struct{}, len(m.AllowedGroups))
+		for _, g := range m.AllowedGroups {
+			allowedGroupsSet[g] = struct{}{}
+		}
+	}
+
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Lifecycle from the framework handle; the protocol switch stays the
+		// manager's.
+		if _, ok := sessHandle.Get(); !ok || !mgr.Enabled() {
+			responses.WriteErrorJSON(w, http.StatusServiceUnavailable, errs.SessionServiceUnavailable.WithDetail("bearer user session"))
+			return
+		}
+		ctx := r.Context()
+		accessToken := security.ExtractBearerToken(r.Header.Get("Authorization"))
+		if accessToken == "" {
+			responses.WriteErrorJSON(w, http.StatusUnauthorized, errs.AccessTokenNotFound.WithDetail("missing Authorization Bearer header"))
+			return
+		}
+
+		// Two-hop: access token hash → sid → umbrella row
+		hash := security.HashHexSHA256(accessToken)
+		sid, found, err := mgr.KVDB.GetValue(ctx, mgr.AccessTokenRowKey(hash))
+		if err != nil {
+			responses.WriteErrorJSON(w, http.StatusInternalServerError, errs.KVDB.Wrap(err))
+			return
+		}
+		if !found {
+			responses.WriteErrorJSON(w, http.StatusUnauthorized, errs.AccessTokenNotFound)
+			return
+		}
+		row, err := mgr.FetchSession(ctx, sid)
+		if err != nil {
+			responses.WriteErrorJSON(w, http.StatusInternalServerError, errs.KVDB.WithDetail("fetching session row").WithCause(err))
+			return
+		}
+		if row == nil {
+			// The token resolved, so it is not the credential that is missing —
+			// the session it points at has ended.
+			responses.WriteErrorJSON(w, http.StatusUnauthorized, errs.BearerSessionNotFound)
+			return
+		}
+
+		// Shape check: this middleware requires user-bound
+		if row.UID == "" {
+			responses.WriteErrorJSON(w, http.StatusForbidden, errs.BearerSessionShapeMismatch.WithDetail("user-bound required"))
+			return
+		}
+
+		// Group filter
+		if _, ok := allowedGroupsSet[row.GroupName]; !ok {
+			responses.WriteErrorJSON(w, http.StatusForbidden, errs.BearerSessionGroupNotAllowed.WithDetail(row.GroupName))
+			return
+		}
+
+		uid, err := m.ParseUID(row.UID)
+		if err != nil {
+			responses.WriteErrorJSON(w, http.StatusInternalServerError, errs.KVDB.WithDetail("parse uid").WithCause(err))
+			return
+		}
+
+		sd := &bearer.UserSessionData[UID]{
+			ID:        sid,
+			UIDStr:    row.UID,
+			UID:       uid,
+			ClientID:  row.ClientID,
+			GroupName: row.GroupName,
+			Mgr:       mgr,
+		}
+		inner.ServeHTTP(w, r.WithContext(bearer.WithUserSessionData(ctx, sd)))
+	}), nil
+}

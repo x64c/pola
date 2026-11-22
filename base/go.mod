@@ -1,0 +1,9 @@
+module github.com/x64c/pola/base
+
+go 1.27.4
+
+require (
+	github.com/golang-jwt/jwt/v5 v5.3.1
+	golang.org/x/crypto v0.59.0
+	golang.org/x/sys v0.50.0
+)
