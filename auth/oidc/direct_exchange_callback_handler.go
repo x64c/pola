@@ -15,14 +15,14 @@ import (
 // the app's user through Resolve, opens a cookie session, and finishes the
 // login (cookie set; redirect to the intended URI or SuccessPath).
 //
-// App side registers it like:
+// App side registers it like (login: the *oidc.WebLoginConf of this login):
 //
 //	router.Handle("GET <callback path>", &oidc.DirectExchangeCallbackHandler{
-//	    Provider:    &app.LoginConf.Provider,
-//	    RedirectURI: app.LoginConf.RedirectURI,
-//	    Flow:        app.AuthnFlow,
-//	    Sessions:    app.CookieSessionManager,
-//	    Resolve:     users.ResolveUIDStr,
+//	    Provider:    &login.Provider,
+//	    RedirectURI: login.RedirectURI,
+//	    Flow:        <flow manager>,
+//	    Sessions:    <cookie session manager>,
+//	    Resolve:     <uid resolver>,
 //	    SuccessPath: "<path>",
 //	})
 //

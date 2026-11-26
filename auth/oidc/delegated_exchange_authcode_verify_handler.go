@@ -32,11 +32,11 @@ import (
 // App side registers it like:
 //
 //	router.Handle("POST <verify path>", &oidc.DelegatedExchangeAuthCodeVerifyHandler{
-//	    Providers:   app.OIDCProviders["<idp id>"],
-//	    Bearer:      app.BearerSessionManager,
-//	    Resolve:     users.ResolveUIDStr,
-//	    Issuer:      app.Host,
-//	    SignIDToken: app.SignIDToken,
+//	    Providers:   <providers by client name>,
+//	    Bearer:      <bearer session manager>,
+//	    Resolve:     <uid resolver>,
+//	    Issuer:      host.Origin, // the web.Host this route is served on
+//	    SignIDToken: <ID token signer>,
 //	    IDTokenTTL:  15 * time.Minute,
 //	}, <BearerSession gate>, <BodyLimit>)
 //

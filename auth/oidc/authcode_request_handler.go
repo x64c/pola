@@ -13,12 +13,12 @@ import (
 // authorization URL. Serves both Delegated and Direct Code Exchange — the
 // initiate half is the same; only the verify half differs.
 //
-// App side registers it like:
+// App side registers it like (login: the *oidc.WebLoginConf of this login):
 //
 //	router.Handle("GET <login path>", &oidc.AuthCodeRequestHandler{
-//	    Provider:    &app.LoginConf.Provider,
-//	    RedirectURI: app.LoginConf.RedirectURI,
-//	    Flow:        app.AuthnFlow,
+//	    Provider:    &login.Provider,
+//	    RedirectURI: login.RedirectURI,
+//	    Flow:        <flow manager>,
 //	})
 //
 // Refusal: 500 FlowTicketIssueFailed when the ticket cannot be issued.

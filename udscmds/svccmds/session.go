@@ -3,6 +3,8 @@ package svccmds
 import (
 	"fmt"
 	"io"
+	"maps"
+	"slices"
 	"strings"
 
 	"github.com/x64c/pola/base/framework"
@@ -12,7 +14,9 @@ import (
 
 // Session is the svc-cmd for the session service. Beyond the lifecycle verbs it
 // exposes per-protocol enable/disable, since the session service hosts
-// independently switchable protocols (cookie, bearer).
+// independently switchable protocols (cookie, bearer). Cookie sessions are a
+// host's, so cookie has one switch per host: "enable cookie" and "disable
+// cookie" act on every host's, and a host name after it on that host's alone.
 type Session struct {
 	AppProvider framework.AppProviderFunc
 	name        string // optional override; defaults to "session"
@@ -26,7 +30,7 @@ func (h *Session) Name() string {
 }
 func (h *Session) Rename(name string) { h.name = name }
 func (h *Session) Usage() string {
-	return "start | stop [--ttl <dur>] | status | enable <protocol> | disable <protocol>"
+	return "start | stop [--ttl <dur>] | status | enable <protocol> [host] | disable <protocol> [host]"
 }
 
 func (h *Session) Handle(subcmd string, args []string, w io.Writer) error {
@@ -55,7 +59,7 @@ func (h *Session) Handle(subcmd string, args []string, w io.Writer) error {
 	case "status":
 		// fall through to status print
 	default:
-		return fmt.Errorf("unknown subcommand %q (supported: start, stop, status, enable <protocol>, disable <protocol>)", subcmd)
+		return fmt.Errorf("unknown subcommand %q (supported: start, stop, status, enable <protocol> [host], disable <protocol> [host])", subcmd)
 	}
 	printSessionStatus(node, s, w)
 	return nil
@@ -66,38 +70,75 @@ func setSessionProtocol(n *framework.ServiceNode, s *session.Service, args []str
 	if len(args) < 1 {
 		return fmt.Errorf("missing protocol name (configured: %s)", strings.Join(names, ", "))
 	}
-	p := sessionProtocol(s, args[0])
-	if p == nil {
-		return fmt.Errorf("unknown or unconfigured protocol %q (configured: %s)", args[0], strings.Join(names, ", "))
+	host := ""
+	if len(args) > 1 {
+		host = args[1]
 	}
-	if enable {
-		p.Enable()
-	} else {
-		p.Disable()
+	switches, err := sessionSwitches(s, args[0], host)
+	if err != nil {
+		return err
+	}
+	for _, sw := range switches {
+		if enable {
+			sw.Switchable.Enable()
+		} else {
+			sw.Switchable.Disable()
+		}
 	}
 	printSessionStatus(n, s, w)
 	return nil
 }
 
-// sessionProtocol returns the named protocol's manager (a svc.Switchable), or
-// nil if not configured.
-func sessionProtocol(s *session.Service, name string) svc.Switchable {
-	switch name {
-	case "cookie":
-		if s.CookieSessionManager != nil {
-			return s.CookieSessionManager
-		}
+// sessionSwitch is one on/off switch of the session service as the operator
+// sees it: "bearer", or one host's cookie sessions — "cookie[<host>]".
+type sessionSwitch struct {
+	Label string
+	svc.Switchable
+}
+
+// sessionSwitches returns the switches a protocol name selects. "bearer" is
+// one switch — bearer sessions are the app's, not a host's — and takes no
+// host. "cookie" is one switch per host that has cookie sessions: with no
+// host, all of them (the whole protocol); with a host's name, that host's
+// alone.
+//
+//   - Returns: the switches, in host-name order; an error when the protocol
+//     is unknown or not configured, when a host is given to bearer, or when
+//     the host has no cookie sessions.
+func sessionSwitches(s *session.Service, protocol, host string) ([]sessionSwitch, error) {
+	switch protocol {
 	case "bearer":
-		if s.BearerSessionManager != nil {
-			return s.BearerSessionManager
+		if s.BearerSessionManager == nil {
+			break
 		}
+		if host != "" {
+			return nil, fmt.Errorf("bearer sessions are not per host: no host argument (got %q)", host)
+		}
+		return []sessionSwitch{{"bearer", s.BearerSessionManager}}, nil
+	case "cookie":
+		if len(s.CookieSessionManagers) == 0 {
+			break
+		}
+		hosts := slices.Sorted(maps.Keys(s.CookieSessionManagers))
+		if host != "" {
+			mgr, ok := s.CookieSessionManagers[host]
+			if !ok {
+				return nil, fmt.Errorf("host %q has no cookie sessions (hosts with cookie sessions: %s)", host, strings.Join(hosts, ", "))
+			}
+			return []sessionSwitch{{"cookie[" + host + "]", mgr}}, nil
+		}
+		switches := make([]sessionSwitch, 0, len(hosts))
+		for _, h := range hosts {
+			switches = append(switches, sessionSwitch{"cookie[" + h + "]", s.CookieSessionManagers[h]})
+		}
+		return switches, nil
 	}
-	return nil
+	return nil, fmt.Errorf("unknown or unconfigured protocol %q (configured: %s)", protocol, strings.Join(sessionProtocolNames(s), ", "))
 }
 
 func sessionProtocolNames(s *session.Service) []string {
 	var names []string
-	if s.CookieSessionManager != nil {
+	if len(s.CookieSessionManagers) > 0 {
 		names = append(names, "cookie")
 	}
 	if s.BearerSessionManager != nil {
@@ -109,16 +150,18 @@ func sessionProtocolNames(s *session.Service) []string {
 func printSessionStatus(n *framework.ServiceNode, s *session.Service, w io.Writer) {
 	printLifecycleStatus(n, w)
 	for _, name := range sessionProtocolNames(s) {
-		p := sessionProtocol(s, name)
-		enabled := "disabled"
-		if p.Enabled() {
-			enabled = "enabled"
+		switches, _ := sessionSwitches(s, name, "")
+		for _, sw := range switches {
+			enabled := "disabled"
+			if sw.Enabled() {
+				enabled = "enabled"
+			}
+			// "serving" is the wrapper gate's actual verdict: admitted && enabled.
+			serving := "not-serving"
+			if n.Admitted() && sw.Enabled() {
+				serving = "serving"
+			}
+			_, _ = fmt.Fprintf(w, "  %s: %s (%s)\n", sw.Label, enabled, serving)
 		}
-		// "serving" is the wrapper gate's actual verdict: admitted && enabled.
-		serving := "not-serving"
-		if n.Admitted() && p.Enabled() {
-			serving = "serving"
-		}
-		_, _ = fmt.Fprintf(w, "  %s: %s (%s)\n", name, enabled, serving)
 	}
 }

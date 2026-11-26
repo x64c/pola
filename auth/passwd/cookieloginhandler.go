@@ -23,9 +23,9 @@ import (
 // App side registers it like:
 //
 //	router.Handle("POST <login path>", &passwd.CookieLoginHandler{
-//	    Verifier:    app.PasswordVerifier,
-//	    Sessions:    app.CookieSessionManager,
-//	    Resolve:     users.ResolveUIDStr,
+//	    Verifier:    <password verifier>,
+//	    Sessions:    <cookie session manager>,
+//	    Resolve:     <uid resolver>,
 //	    SuccessPath: "<path>",
 //	    FailurePath: "<the form's path>",
 //	}, <CheckOriginHeader>, <BodyLimit>, <IP throttle>, <name throttle>)

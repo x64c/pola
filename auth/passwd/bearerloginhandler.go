@@ -28,9 +28,9 @@ import (
 // App side registers it like:
 //
 //	router.Handle("POST <login path>", &passwd.BearerLoginHandler{
-//	    Verifier: app.PasswordVerifier,
-//	    Bearer:   app.BearerSessionManager,
-//	    Resolve:  users.ResolveUIDStr,
+//	    Verifier: <password verifier>,
+//	    Bearer:   <bearer session manager>,
+//	    Resolve:  <uid resolver>,
 //	}, <BodyLimit>, <IP throttle>, <name throttle>)
 //
 // Refusals: 401 BearerClientNotFound · 400 InvalidLoginRequest / JSONUnmarshalFailed · 401

@@ -25,12 +25,12 @@ import (
 // App side registers it like:
 //
 //	router.Handle("GET <callback path>", &fwauthserver.DelegatedExchangeCallbackHandler{
-//	    Verifier:     &fwauthserver.Verifier{Upstream: app.MainUpstreamClient, ProviderID: "<idp id>"},
-//	    AuthClientID: app.LoginConf.Provider.ClientID,
-//	    RedirectURI:  app.LoginConf.RedirectURI,
-//	    Flow:         app.AuthnFlow,
-//	    Sessions:     app.CookieSessionManager,
-//	    Resolve:      users.ResolveUIDStr,
+//	    Verifier:     &fwauthserver.Verifier{Upstream: <upstream client>, ProviderID: "<idp id>"},
+//	    AuthClientID: "<IdP client id>",
+//	    RedirectURI:  "<callback URI>",
+//	    Flow:         <flow manager>,
+//	    Sessions:     <cookie session manager>,
+//	    Resolve:      <uid resolver>,
 //	    SuccessPath:  "<path>",
 //	})
 //

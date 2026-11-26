@@ -4,7 +4,7 @@ go 1.27.4
 
 require (
 	github.com/jackc/pgx/v5 v5.13.0
-	github.com/x64c/pola/base v0.1.0
+	github.com/x64c/pola/base v0.2.0
 )
 
 require (

@@ -14,7 +14,8 @@ import (
 //	svc help [service]             — usage for one service, or all
 //	svc <subcmd> <service> [args]   — route a subcommand to that service
 //
-// e.g. `svc status web`, `svc stop throttle`, `svc disable session cookie`.
+// e.g. `svc status web`, `svc stop throttle`, `svc disable session cookie`,
+// `svc pause web <host>`.
 //
 // It is built from a list of svc-cmds (the building blocks live in the
 // svccmds subpackage); each carries its own Name(). Svc keeps the list in
@@ -55,7 +56,7 @@ func (h *Svc) GroupName() string { return "svc" }
 func (h *Svc) Command() string   { return "svc" }
 
 func (h *Svc) Desc() string {
-	return "Control framework services (list / status / start / stop; session protocol enable/disable)"
+	return "Control framework services (list / status / start / stop; session protocol enable/disable; web host pause/resume)"
 }
 
 func (h *Svc) Usage() string {
