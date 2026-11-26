@@ -14,6 +14,28 @@ type RouteGroup struct {
 	HandlerWrappers []web.HandlerWrapper // Group Handler Wrappers
 }
 
+// hostBinderRecorder is the router a group can hand its HostBinder wrappers
+// to (BaseRouter, and any router that embeds it).
+type hostBinderRecorder interface {
+	AddHostBinder(route string, b web.HostBinder)
+}
+
+// recordHostBinder hands wrapped to the group's router if it is a wrapper
+// that must be told the router's hosts. A router that cannot take it would
+// leave the wrapper never told, serving no host, so that is refused here.
+func (g *RouteGroup) recordHostBinder(route string, wrapped http.Handler) error {
+	b, ok := wrapped.(web.HostBinder)
+	if !ok {
+		return nil
+	}
+	rec, ok := g.Router.(hostBinderRecorder)
+	if !ok {
+		return fmt.Errorf("%T must be told the hosts its router serves, and this router (%T) cannot pass them on: it has no AddHostBinder", wrapped, g.Router)
+	}
+	rec.AddHostBinder(route, b)
+	return nil
+}
+
 // Ensure RouteGroup implements Router
 var _ Router = (*RouteGroup)(nil)
 
@@ -82,6 +104,9 @@ func (g *RouteGroup) Handle(subpattern string, handler http.Handler, handlerWrap
 	// inline slices.Backward
 	for i := len(handlerWrappers) - 1; i >= 0; i-- {
 		wrapped, err := handlerWrappers[i].Wrap(wrappedHandler)
+		if err == nil {
+			err = g.recordHostBinder(fullPattern, wrapped)
+		}
 		if err != nil {
 			panic(fmt.Sprintf("routing: route %q: %v", fullPattern, err))
 		}
@@ -90,6 +115,9 @@ func (g *RouteGroup) Handle(subpattern string, handler http.Handler, handlerWrap
 	// inline slices.Backward
 	for i := len(g.HandlerWrappers) - 1; i >= 0; i-- {
 		wrapped, err := g.HandlerWrappers[i].Wrap(wrappedHandler)
+		if err == nil {
+			err = g.recordHostBinder(fullPattern, wrapped)
+		}
 		if err != nil {
 			panic(fmt.Sprintf("routing: route %q (group %q): %v", fullPattern, g.Prefix, err))
 		}

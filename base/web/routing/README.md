@@ -40,6 +40,31 @@ limit, auth, session validation) **earlier** in the vararg list (and at the
 group level if they apply group-wide). Put inner concerns (response
 decoration, body parsing helpers) later.
 
+## - A Router and Its Hosts
+
+A router is a routing table: it matches a request's method and path, never
+its Host, and it does not say which host it serves. That is said in one
+place, the web service's handler table (`web.HostHandlers`): each host has one
+router there, and a router may stand under one host or under several.
+
+```go
+router := &routing.BaseRouter{ServeMux: http.NewServeMux()}
+// … declare its routes …
+handlers := web.HostHandlers{hostA: router, hostB: router} // or a router per host
+```
+
+When that table is built, the router is told each host it stands under
+(`web.HostBinder`) and passes it on to every wrapper mounted on it that needs
+to know, on `Handle` and on `Group` at any depth. Such a wrapper serves each
+request as the host the request is for, so on a router under two hosts it
+guards each with that host's own. A wrapper that cannot serve one of the
+router's hosts fails the boot, naming the host and the route.
+
+A router of your own that embeds `BaseRouter` passes hosts on the same way.
+Something placed in front of a router in the handler table must pass
+`BindHost` on to it, or the wrappers behind it are never told their host and
+refuse the requests they would have checked.
+
 ## - Just Using Bundled BaseRouter and RouteGroup
 
 ```

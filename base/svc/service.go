@@ -59,8 +59,8 @@ type Service interface {
 
 	// Start transitions READY → RUNNING, whether that is the first start or a
 	// resume after Stop — the transition is the same either way. parentCtx is
-	// the runtime cancellation lineage (typically Core.RootCtx); the service
-	// derives its own per-cycle context from it.
+	// the runtime cancellation lineage (typically the process's root context);
+	// the service derives its own per-cycle context from it.
 	//
 	// HONEST: return only once the service has genuinely started. Everything
 	// that can fail — binding a port, opening a socket, acquiring a lease —
@@ -126,24 +126,24 @@ type Service interface {
 	//     reads never see a misleading transient value during shutdown.
 	//   - Send on `s.terminated` from the DEFER above, exactly once per service
 	//     lifetime (the idempotent branch returns before the defer arms). Never
-	//     from Stop, run goroutine exit, RootCancel cascade, or anywhere else.
+	//     from Stop, run goroutine exit, a root-context cancel, or anywhere else.
 	//   - The send is UNCONDITIONAL — a missed stop deadline must still report,
 	//     with its error. A service that returns early without sending leaves
-	//     `framework.Core.WaitServicesTerminated` counting N-1 forever: main
-	//     wedges until the supervisor's SIGKILL (under systemd, its whole stop
-	//     timeout).
-	//   - Buffer `s.terminated` with capacity 1 (in NewService) so this single
-	//     send never blocks even if no one is reading yet.
+	//     whoever waits on every service's Terminated() counting N-1 forever:
+	//     the process wedges until its supervisor's SIGKILL (e.g. under
+	//     systemd, the whole stop timeout).
+	//   - Buffer `s.terminated` with capacity 1 (in the constructor) so this
+	//     single send never blocks even if no one is reading yet.
 	Terminate(ctx context.Context) error
 
 	// Terminated fires once when cleanup truly completes (post-Terminate).
-	// Consumed by framework.Core only.
+	// Consumed only by whoever runs the app's shutdown.
 	//
 	// Implementation contract:
 	//   - Channel type: `chan error`, buffered with capacity 1
-	//   - Created in NewService, never re-created
+	//   - Created in the constructor, never re-created
 	//   - Sent to ONLY by Terminate (see its doc for the exact send site)
-	//   - NEVER close it — the framework treats a receive as the completion
+	//   - NEVER close it — its consumer treats a receive as the completion
 	//     signal; closing would forge spurious zero-valued completions
 	Terminated() <-chan error
 }

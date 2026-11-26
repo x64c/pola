@@ -76,9 +76,9 @@ no precision and is documented as unusable.
 Results are whole ticks within `time.Duration`'s range: instants more than
 roughly ±292 years apart overflow it, capping the value as `Time.Sub` does.
 
-## Where it is used
+## Where it fits
 
-`kvdbs.DB` publishes one through `Clock()`, so a caller can place a deadline
-with the same rules the implementation uses instead of re-deriving the
-arithmetic. Any component with its own tick — a scheduler, a lease, a rate
-window — is a candidate for the same treatment.
+A component with its own tick publishes its clock, so a caller can place a
+deadline with the same rules the component uses instead of re-deriving the
+arithmetic. Any such component is a candidate: a key-value store with
+expiring keys, a scheduler, a lease, a rate window.

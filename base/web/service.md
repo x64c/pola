@@ -1,9 +1,10 @@
 # Web Service
 
-HTTP server wrapper around `net/http`. The app supplies a listen address
-and an `http.Handler` (usually the router); the service spins up an
-`*http.Server` on Start, drains gracefully on Stop, and rebuilds the
-server fresh on the next Start cycle.
+HTTP server wrapper around `net/http`. The conf supplies a listen address
+and the hosts the app serves; the app supplies one `http.Handler` per host
+(usually that host's router). The service spins up an `*http.Server` on
+Start, drains gracefully on Stop, and rebuilds the server fresh on the next
+Start cycle.
 
 Unlike `throttle` / `session` / `jobsched`, this service has **no
 lifecycle-independent data plane**. There is no API surface that does
@@ -24,29 +25,112 @@ This service consists of 2 things:
 The framework lifecycle (`Start`/`Stop`/`Terminate`) controls **only #2**.
 #1 stays put for the lifetime of the Service value.
 
-## Prepare
+## Construct
 
-`Core.PrepareWebService(conf, buildHandler, deps...)`:
-- Validates `conf` (its own invariants, then `drain_timeout_secs` <
-  `svc_terminate_timeout_secs`).
-- Registers the Service with `Core.RegisterServiceFunc`: the web service's
-  own `MayUse` (throttle, session — when prepared) plus `deps` are resolved,
-  then `buildHandler(d)` builds the HTTP handler from those `Deps`, and the
-  Service (`NewServiceAs("WebService", handler, conf)`) is placed in the
-  composition graph the start and terminate walks follow.
-- Handlers hold no graph edges: a service a handler uses is declared in
-  `deps`, and the handler's gated handle comes from `d.Handle`. The web
-  service then starts after that service and is torn down before it. A
-  handler that uses no service ignores the `Deps`.
+`NewHostDispatcher(conf, handlers)`, then `NewService(dispatcher, conf)`
+(`NewServiceAs(name, dispatcher, conf)` to name the instance):
+- `NewHostDispatcher` checks the conf's hosts and the handlers against them:
+  `handlers` (`HostHandlers`) must name every host of the conf and only
+  those, or it returns an error.
+- `NewService` keeps the listen address, the dispatcher and the conf. It
+  binds nothing and builds no server: that is `Start`'s.
+- The conf is expected valid (`ServerConf.Validate`). One relation `Validate`
+  cannot check is the caller's: `drain_timeout_secs` must be shorter than the
+  time the service is given to terminate.
+- A handler holds nothing of this service's lifecycle. What a handler needs
+  running while it serves must be started before this service and stopped
+  after it; ordering the two is the work of whoever runs both.
 
-The `*http.Server` itself is **not** built at Prepare time — it's built
+## Hosts
+
+A `ServerConf` lists the hosts the app serves under `hosts`, each keyed by a
+name and stating its `origin`, `read_timeout_secs` and `write_timeout_secs`.
+An app that serves one host has one entry.
+
+At boot, code picks each host by its name and says which handler serves it:
+
+```go
+host, err := conf.Host("main") // the entry "main" under "hosts"
+
+// <handler>: what serves this host's requests, usually the host's router
+dispatcher, err := web.NewHostDispatcher(conf, web.HostHandlers{host: <handler>})
+service := web.NewService(dispatcher, conf)
+```
+
+- `web.HostHandlers` is the one place that says which handler serves which
+  host. Each host has exactly one handler, and it must name every host of the
+  conf and only those, or the boot fails.
+- The same handler may stand under several hosts, which then serve the same
+  routes: `web.HostHandlers{hostA: <handler>, hostB: <handler>}`.
+- A handler that must know which host it serves (`web.HostBinder`) is told
+  from this table: when the dispatcher is built, it calls `BindHost` once for
+  each host the handler stands under, and an error fails the boot, naming the
+  host. Such a handler serves each request as the host the dispatcher chose
+  for it (`web.RequestHost(r)`), so under several hosts it is right for each.
+- A host's handler never matches on the Host itself: the dispatcher has done
+  it by the time the handler runs.
+
+The `HostDispatcher` is what the server runs. Per request it reads the Host
+(port dropped, lowercased, one trailing dot dropped — never
+`X-Forwarded-Host`), picks the host with that host name, sets that host's
+deadlines, and calls its handler. A Host that is no listed host is answered
+421 Misdirected Request: the hosts of the conf are the app's Host allowlist,
+and nothing catches the rest. A name the app is to answer to — a loopback
+address a local check calls it by, say — is listed as a host like any
+other (`"origin": "http://127.0.0.1:<port>"`), with its own handler.
+
+### Pausing a host
+
+A host serves from boot, unless its conf says `"start_paused": true`. It can
+be **paused** and **resumed** while the app runs, one host at a time, the
+others untouched:
+
+```go
+err := service.PauseHost(name, retryAfter) // retryAfter 0: no Retry-After is sent
+err := service.ResumeHost(name)
+states := service.HostStates()
+```
+
+- While a host is paused the dispatcher answers its requests itself: 503
+  `HostPaused`, right after the host is found and before anything of the
+  host is reached. The host's handler is not called, so every path on the
+  host answers 503 — one the handler would have answered 404 included.
+- A paused host pauses everything that relies on it. An ordinary request
+  already inside the host when the pause begins finishes; what would not
+  end by itself is told to end: a long-lived handler takes the host's pause
+  notice with `web.HostPauseNoticeReceiver(r)` and finishes when it closes.
+  A stream that does so ends, and its client comes back to the 503.
+- It is a pause, not a stop: the host's handler and what it holds stay as
+  they are, and `ResumeHost` has it serving again at once.
+- `retryAfter` is what the 503 tells clients in `Retry-After`. It is only
+  said — the host stays paused until `ResumeHost` — and at zero the header
+  is not sent: how long a pause will last is the caller's to say.
+- Only the host's HTTP is paused. Whatever else the app runs keeps running.
+- The pause is the process's: it survives a `Stop` and `Start` of the
+  service, and a restart of the app returns every host to how its conf says
+  it starts.
+- `"start_paused": true` under a host makes the host START paused: its
+  handler is in place and what is its own is prepared as for any host, but
+  it answers 503 from the first request until `ResumeHost` — to bring hosts
+  up one at a time, or to hold one back until the others are checked. It is
+  the host's state at boot only. Optional: absent or `false`, the host
+  serves from boot.
+
+The read and write deadlines are the host's, so the `*http.Server` carries
+neither: the dispatcher sets them once the host is known. The write deadline
+is set on every request and bounds the handler. The read deadline is set
+only while a body remains to be read, and bounds the upload: on a request
+with no body it would cancel the request's context mid-handler.
+
+The `*http.Server` itself is **not** built with the Service — it's built
 in `Start` (and rebuilt each cycle, because `http.Server` is one-shot
 after `Shutdown`).
 
 ## Start()
 
-- Builds a fresh `*http.Server` via `ServerConf.newHTTPServer` (timeouts and
-  `BaseContext` come from conf). (Mandatory rebuild — the previous one is
+- Builds a fresh `*http.Server` via `ServerConf.newHTTPServer` (the header
+  and idle timeouts and `BaseContext` come from conf; the read and write
+  deadlines are each host's, set per request by the `HostDispatcher`). (Mandatory rebuild — the previous one is
   dead after `Shutdown`.)
 - Makes a fresh **drain notice** for the cycle and stores its receive end in
   every request context, as a value. A handler gets it with
@@ -97,8 +181,7 @@ After Stop:
 - **The conf-driven internal drain budget** for `Server.Shutdown` — the
   ceiling on how long stdlib waits for in-flight handlers. It comes from
   `ServerConf.DrainTimeoutSecs` (`conf.drainTimeout()`), not from Stop's
-  ctx, and is validated at boot to be shorter than the service's terminate
-  timeout. Long-running request handlers can be force-cancelled by this
+  ctx, and must be shorter than the time the service is given to terminate. Long-running request handlers can be force-cancelled by this
   deadline regardless of what ctx the operator gave to Stop.
 
 **Two signals a handler can see:**
@@ -124,8 +207,8 @@ Same flow as `Stop()` for this service (cancel + graceful drain + wait),
 plus:
 - Terminal: state stays `TERMINATING`. The service cannot be `Start`ed
   again in this process lifetime.
-- Fires the framework's `Terminated` channel so
-  `Core.WaitServicesTerminated` can count this service as done.
+- Fires its `Terminated()` channel, so whoever waits on it can count this
+  service as done.
 
 The `addr` and `handler` references stay on the struct until process
 exit; nothing actively releases them.

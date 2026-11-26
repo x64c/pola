@@ -16,45 +16,53 @@ What it holds:
 
 - `SessionLocks` (`locking.Store`) — the per-session critical-section
   lock store, shared with every attached manager. Which implementation
-  fills the seat is the app's, named at `Prepare`.
+  fills the seat is the app's, given when the Service is constructed.
 - The `KVDB` reference the managers read and write sessions through.
-- One manager field per session protocol (e.g. `CookieSessionManager`,
-  `BearerSessionManager`). Each manager is a **concrete type specific to
-  its protocol** — no shared interface. All of this is available from the
-  moment `Prepare` returns and stays available for the lifetime of the
-  process.
+- The managers of each session protocol: `BearerSessionManager`, one for
+  the app, and `CookieSessionManagers`, one per host that has cookie
+  sessions, keyed by the host's name. Bearer sessions are the app's — a
+  token is a client's, whatever host it is presented to. Cookie sessions
+  are a host's: a browser keeps a session cookie for one host only, and
+  each host has its own conf and keyring. Each manager is a **concrete type
+  specific to its protocol** — no shared interface. All of this is
+  available from the moment it is attached and stays available for the
+  lifetime of the process.
 
-## Prepare
+## Construct
 
-`Core.PrepareSessionService(sessionLocks)`:
-- Requires `MainKVDB` set, and a non-nil lock store — the framework picks
-  neither.
-- Constructs the Service (`NewService`) and registers it with
-  `Core.RegisterService`, which places it in the composition graph the
-  start and terminate walks follow.
+`NewService(kvdb, lockingManager)` (`NewServiceAs(name, …)` to name the
+instance):
+- Takes the KVDB the managers read and write sessions through, and the lock
+  store they share. The service picks neither.
 
-After `Prepare`, the app attaches the session managers for whichever
-protocols it uses:
-- `Core.PrepareCookieSessions(...)` → wires `CookieSessionManager`
-- `Core.PrepareBearerSessions(...)` → wires `BearerSessionManager`
+Once the Service is constructed, the app attaches the session managers for
+whichever protocols it uses:
+- `CookieSessionManagers[<host name>]` — the cookie manager of one host; one
+  entry per host that has cookie sessions
+- `BearerSessionManager` — the app's one bearer manager
 
 An app uses one, the other, or both. Unwired fields stay `nil` and the
 middleware paths for those protocols are simply never reached.
+
+A cookie manager serves one host's sessions, so a session cookie from one
+host opens nothing on another — the host's name is in every row key
+(`<app>:<host>:cu:<sid>`) and in the cipher context every cookie value is
+sealed under.
 
 ## Start() / Stop()
 
 Pure state transitions — there is no background work to begin or halt.
 The states still matter: they are what the admission gate answers with,
-so an operator's `svc stop` makes the session middleware refuse, exactly
-as for any other service. The session *data* is independent of this
+so stopping the service makes the session middleware refuse, exactly as
+for any other service. The session *data* is independent of this
 lifecycle: KVDB rows keep expiring on their TTLs, and the lock store
 keeps draining itself, whatever state the service is in.
 
 ## Terminate()
 
 Terminal: state stays `TERMINATING`; the service cannot be `Start`ed
-again in this process lifetime. Fires the framework's `Terminated`
-channel so `Core.WaitServicesTerminated` can count this service as done.
+again in this process lifetime. Fires its `Terminated()` channel, so
+whoever waits on it can count this service as done.
 There is no stop activity to wait for, so it completes immediately and
 always cleanly.
 
@@ -65,6 +73,6 @@ the KVDB's responsibility (TTL).
 ## Operator note
 
 If you need to drain or invalidate sessions, do it through the manager
-APIs (e.g. `CookieSessionManager.DestroyUserSession` or by deleting the
+APIs (e.g. a cookie manager's `DestroyUserSession` or by deleting the
 relevant KVDB keys). Stopping the service gates the middleware; it has no
 effect on session validity or session-row presence.

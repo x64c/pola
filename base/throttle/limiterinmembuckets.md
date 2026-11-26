@@ -19,25 +19,23 @@ This service consists of 2 things:
    stale buckets.
 
 The framework lifecycle (`Start`/`Stop`/`Terminate`) controls **only #2**.
-#1 is available from the moment `Prepare` returns and stays available for
-the lifetime of the process.
+#1 is available from the moment the limiter is constructed and stays
+available for the lifetime of the process.
 
-## Prepare
+## Construct
 
-`Core.PrepareThrottleService(cleanupCycle, cleanupOlderThan)`:
-- Constructs the LimiterInMemBuckets (`NewLimiterInMemBuckets`) with the given cleanup-cycle and
-  idle-bucket-expiry config.
+`NewLimiterInMemBuckets(cleanupCycle, cleanupOlderThan)`
+(`NewLimiterInMemBucketsAs(name, …)` to name the instance):
+- Takes the cleanup cycle and the idle-bucket expiry.
 - Initialises the `groups map[string]*BucketGroup` (empty).
-- Registers the LimiterInMemBuckets with `Core.RegisterService`, which places it in the
-  composition graph the start and terminate walks follow.
 
-After `Prepare`, the app registers concrete bucket groups via
+Once it is constructed, the app registers concrete bucket groups via
 `SetBucketGroup(id, conf)` — this *must* happen before `Start` (Start
 enforces it: `SetBucketGroup` after `Start` calls `log.Fatalf`).
 
 Everything from this section is independent of `Start`/`Stop`/`Terminate`
 state. The configuration and the empty data structures are in place from
-the moment Prepare returns.
+the moment the limiter is constructed.
 
 ## Start()
 
@@ -71,8 +69,8 @@ goroutine, leaves the `groups` map in memory.
 Distinctions from `Stop`:
 - Terminal: state stays `TERMINATING`. The service cannot be `Start`ed
   again in this process lifetime.
-- Fires the framework's `Terminated` channel so
-  `Core.WaitServicesTerminated` can count this service as done.
+- Fires its `Terminated()` channel, so whoever waits on it can count this
+  service as done.
 
 No throttle-specific resources to release — the `groups` map is reclaimed
 by GC at process exit.
@@ -82,9 +80,9 @@ by GC at process exit.
 "Stop throttle" ≠ "pause the limiter." Stop halts background cleanup; the
 buckets stay and `TryAdmit` keeps computing honest verdicts, because they are
 passive state and no lifecycle answer is folded into the rate verdict. Whether
-this limiter may be used at all is decided in front of the pointer, by the
-framework handle a consumer holds it through (`Framework Service Composition
-Graph` §11.1).
+this limiter may be used at all is decided in front of the pointer, by
+whoever hands it to its consumers (see `svc.Service`: reachability is not
+the service's to control).
 
 So a stopped limiter keeps refusing what is over its limit; what stops is the
 sweeping of idle buckets, which then live until Start resumes it.

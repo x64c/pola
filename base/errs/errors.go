@@ -14,6 +14,8 @@ var (
 	ContentLengthTooLarge = &Error{Name: "ContentLengthTooLarge", Code: 1000, Message: "Content-Length header is too large"} // declared body would exceed limit — caught upfront from the Content-Length header
 	RequestBodyTooLarge   = &Error{Name: "RequestBodyTooLarge", Code: 1001, Message: "request body too large"}               // actual body bytes exceeded limit during streaming read
 	OriginNotAllowed      = &Error{Name: "OriginNotAllowed", Code: 1010, Message: "request origin not allowed"}              // Origin header missing, or not in the configured allowlist
+	MisdirectedRequest    = &Error{Name: "MisdirectedRequest", Code: 1011, Message: "request host not served here"}          // the request's Host names no host served here
+	HostPaused            = &Error{Name: "HostPaused", Code: 1012, Message: "host paused"}                                   // the request's host is paused; it serves again when resumed
 	ServiceUnavailable    = &Error{Name: "ServiceUnavailable", Code: 1020, Message: "service unavailable"}                   // a service the endpoint needs is not admitted for use right now (stopped, terminating, or never wired)
 	ActionLocked          = &Error{Name: "ActionLocked", Code: 1030, Message: "action locked by another request"}            // a named action lock the endpoint needs is held; retry later
 	InternalError         = &Error{Name: "InternalError", Code: 1050, Message: "internal server error"}
@@ -93,7 +95,7 @@ var (
 
 	KVDB               = &Error{Name: "KVDB", Code: 1600, Message: "kvdb error"}                                     // general key-value store error
 	SQLDB              = &Error{Name: "SQLDB", Code: 1610, Message: "sql db error"}                                  // general SQL/database error
-	SQLNotFoundInStore = &Error{Name: "SQLNotFoundInStore", Code: 1611, Message: "sql statement not found in store"} // SQL statement not found in RawSQLStore
+	SQLNotFoundInStore = &Error{Name: "SQLNotFoundInStore", Code: 1611, Message: "sql statement not found in store"} // no SQL statement under the requested name in the store it was looked up in
 
 	// Relation
 

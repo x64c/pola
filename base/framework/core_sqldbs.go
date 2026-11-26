@@ -10,6 +10,13 @@ import (
 	"github.com/x64c/pola/base/sqldbs"
 )
 
+// PrepareSQLDBClients builds the app's SQL clients and broadcasts its raw SQL
+// sets to them. Each preparer is one driver's: it is given the app root and
+// the client map, and adds the clients its own conf describes. Then every
+// set in c.RawSQLFSMap (set it before this call) is loaded into EVERY client
+// under the set's name, so all clients carry the same store names and a
+// handler can stay dialect-blind (see sqldbs's raw store doc). The databases
+// themselves are prepared afterwards, by PrepareSQLDatabases.
 func (c *Core) PrepareSQLDBClients(preparers ...func(string, map[string]sqldbs.Client) error) error {
 	c.SQLDBClients = make(map[string]sqldbs.Client)
 	for _, fn := range preparers {

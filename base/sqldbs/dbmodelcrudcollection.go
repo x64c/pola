@@ -16,9 +16,9 @@ import (
 // type's bindings shape does not vary between instances, so every row
 // aligns. An empty collection inserts nothing and reports 0.
 //
-// There is deliberately no AutoIncrementing collection variant: mysql's
-// LastInsertId can return only one generated key per statement, so a
-// per-row-keys contract cannot be kept across engines — a caller generating
+// There is deliberately no AutoIncrementing collection variant: an engine may
+// return only one generated key per statement (e.g. MySQL's LastInsertId), so
+// a per-row-keys contract cannot be kept across engines — a caller generating
 // keys per row loops InsertDBModelAutoIncrementingPK.
 func InsertDBModelCollection[M any, MP IdentifiableDBModel[M, ID], ID comparable](ctx context.Context, exec Executor, modelCollection *coll.Collection[MP, ID]) (int64, error) {
 	if modelCollection.Len() == 0 {

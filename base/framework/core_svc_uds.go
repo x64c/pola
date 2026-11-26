@@ -8,6 +8,14 @@ import (
 	"github.com/x64c/pola/base/uds"
 )
 
+// PrepareUDSService reads config/.uds.json — socket path, socket mode,
+// per-line read cap — builds the UDS service over cmdStore, the command set
+// the app registered, and registers it. Every field of the conf is
+// required-explicit: a missing or incoherent value is a named boot refusal
+// (uds.Conf.Validate).
+//
+// Once it returns, the command store is populated and queryable, but nothing
+// serves it until the service starts.
 func (c *Core) PrepareUDSService(cmdStore *uds.CommandStore) (*uds.Service, error) {
 	confFilePath := filepath.Join(c.AppRoot, "config", ".uds.json")
 	confBytes, err := os.ReadFile(confFilePath) // ([]byte, error)

@@ -10,8 +10,10 @@ import (
 	"github.com/x64c/pola/base/security"
 )
 
+// AnonymousSessionRowKey is the KVDB key of an anonymous session's row:
+// <app>:<host>:ca:<session id>.
 func (m *SessionManager) AnonymousSessionRowKey(sessionID string) string {
-	return m.appName + ":ca:" + sessionID
+	return m.appName + ":" + m.hostName + ":ca:" + sessionID
 }
 
 func (m *SessionManager) AnonymousSessionRowExists(ctx context.Context, sessionID string) (bool, error) {

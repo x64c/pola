@@ -14,8 +14,8 @@ func HasBody(r *http.Request) bool {
 
 // IsSafeMethod reports whether the request method is "safe" per RFC 9110:
 // no expected side effects on the server (GET, HEAD, OPTIONS). Used by
-// middlewares that may skip state-change defenses on safe methods (e.g.
-// CSRF, CheckOriginHeader).
+// middlewares that may skip state-change defenses on safe methods (e.g. a
+// CSRF check, an Origin-header check).
 //
 // Note: the answer set coincides with !HasBody(r) today, but the semantics
 // differ — this predicate is about method side-effect semantics, not body

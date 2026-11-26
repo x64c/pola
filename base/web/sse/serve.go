@@ -15,10 +15,14 @@ import (
 // the frame, or for a ResponseWriter that hides write deadlines (a wrapper's own writer without Unwrap(); every frame
 // sets one), and 204 when the service is not running (RefuseStream), so a client does not come back. Then it sends the
 // stream's headers and the Backlog, and stays: a frame for each item, and the heartbeat after each Heartbeat.Silence
-// without a write. It ends when Items or EndNotice closes, when the web service starts its drain, when this service
-// stops, when the client leaves, or when a write fails or does not finish within frame_write_timeout_secs. On the
-// first three the client is told when to reconnect (retry:). Returns nil for every ending but a refusal, a failed
-// write, or an item ToEvent turns into an event that cannot be framed.
+// without a write. It ends when Items or EndNotice closes, when the web service starts its drain, when the request's
+// host is paused, when this service stops, when the client leaves, or when a write fails or does not finish within
+// frame_write_timeout_secs. On the first four the client is told when to reconnect (retry:). Returns nil for every
+// ending but a refusal, a failed write, or an item ToEvent turns into an event that cannot be framed.
+//
+// A stream ended by its host's pause is not served again until the host is resumed: the client comes back to the 503
+// every request to a paused host gets, and a conforming client (EventSource) then closes for good. Opening the stream
+// again after the resume is the page's to do.
 func Serve[T any](s *Service, w http.ResponseWriter, r *http.Request, src Source[T]) error {
 	if err := src.validate(); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -54,6 +58,7 @@ func Serve[T any](s *Service, w http.ResponseWriter, r *http.Request, src Source
 	silence := time.NewTimer(src.Heartbeat.Silence)
 	defer silence.Stop()
 	drainNotice, _ := web.DrainNoticeReceiverFromContext(r.Context())
+	pauseNotice, _ := web.HostPauseNoticeReceiver(r) // a paused host pauses its streams too
 	for {
 		select {
 		case item, more := <-src.Items:
@@ -80,6 +85,9 @@ func Serve[T any](s *Service, w http.ResponseWriter, r *http.Request, src Source
 			s.endWithRetry(w, rc)
 			return nil
 		case <-drainNotice:
+			s.endWithRetry(w, rc)
+			return nil
+		case <-pauseNotice:
 			s.endWithRetry(w, rc)
 			return nil
 		case <-cycleDone:

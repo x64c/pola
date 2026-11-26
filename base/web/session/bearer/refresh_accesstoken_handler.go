@@ -17,7 +17,7 @@ import (
 // App side registers it like:
 //
 //	router.Handle("POST <path>", &bearer.RefreshAccessTokenHandler{
-//	    SessionManager: app.SessionService.BearerSessionManager,
+//	    SessionManager: <bearer session manager>,
 //	})
 type RefreshAccessTokenHandler struct {
 	SessionManager *SessionManager

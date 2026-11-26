@@ -37,9 +37,10 @@ err := sse.Serve(service, w, r, src)
    deadlines — a wrapper in front that passes on a writer of its own must give it `Unwrap() http.ResponseWriter`,
    since every frame sets a deadline and flushes through `http.ResponseController`. Otherwise it sends the headers and
    the `Backlog`, then a frame per item and the heartbeat after each silence.
-3. The stream ends when `Items` or `EndNotice` closes, when the web service starts its drain, when the service stops,
-   when the client leaves, or when a write fails or does not finish within `frame_write_timeout_secs`. On the first
-   three the client is told to reconnect after `retry_millis`.
+3. The stream ends when `Items` or `EndNotice` closes, when the web service starts its drain, when the request's host
+   is paused (`web.Service.PauseHost`), when the service stops, when the client leaves, or when a write fails or does
+   not finish within `frame_write_timeout_secs`. On the first four the client is told to reconnect after
+   `retry_millis`.
 
 ## Reconnecting
 
@@ -48,6 +49,14 @@ A conforming client (`EventSource`) treats every end of a stream as an interrupt
 when an answer is not a 200 stream; `RefuseStream` gives that answer, `ComeBackAfter` asks it to return after a wait.
 A page that closes a stream and opens a new one starts without a last ID and has to pass it in the URL, which is what
 `LastEventID`'s parameter reads — after the header, which is always the latest.
+
+## A paused host
+
+Pausing a host pauses everything that relies on it, its streams included: every stream open on that host ends, and
+while the host is paused a stream request to it is answered 503 like any other request — by the web service, before
+this package is reached. A 503 is not a 200 stream, so a conforming client closes for good and does not return by
+itself once the host is resumed; opening the stream again is the page's to do. Streams on the other hosts are not
+touched.
 
 ## Heartbeat
 

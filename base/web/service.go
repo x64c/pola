@@ -7,6 +7,7 @@ import (
 	"log"
 	"net"
 	"net/http"
+	"time"
 
 	"github.com/x64c/pola/base/svc"
 )
@@ -14,7 +15,7 @@ import (
 type Service struct {
 	name        string             // registered instance identity; see NewServiceAs
 	addr        string             // preserved across cycles for *http.Server rebuild
-	handler     http.Handler       // preserved across cycles
+	handler     *HostDispatcher    // preserved across cycles; a HostDispatcher by type, because it is what sets each request's deadlines
 	conf        ServerConf         // the server recipe (deadlines + drain window), validated by the loader
 	ctx         context.Context    // per-cycle runtime context (set in Start)
 	cancel      context.CancelFunc // per-cycle cancel (set in Start)
@@ -36,19 +37,19 @@ func (s *Service) State() svc.State {
 	return s.state.Load()
 }
 
-func NewService(httpHandler http.Handler, conf ServerConf) *Service {
-	return NewServiceAs("WebService", httpHandler, conf)
+func NewService(dispatcher *HostDispatcher, conf ServerConf) *Service {
+	return NewServiceAs("WebService", dispatcher, conf)
 }
 
 // NewServiceAs is NewService with the name given explicitly. A name identifies
 // a registered INSTANCE, not a type: it is what logs, status output and
 // dependency declarations all refer to, and registration rejects a duplicate.
 // The string is taken raw — uniqueness and legibility are the caller's.
-func NewServiceAs(name string, httpHandler http.Handler, conf ServerConf) *Service {
+func NewServiceAs(name string, dispatcher *HostDispatcher, conf ServerConf) *Service {
 	s := &Service{
 		name:       name,
 		addr:       conf.Listen,
-		handler:    httpHandler,
+		handler:    dispatcher,
 		conf:       conf,
 		terminated: make(chan error, 1),
 	}
@@ -86,6 +87,9 @@ func (s *Service) Start(parentCtx context.Context) error {
 	// handler that reads it (DrainNoticeReceiverFromContext) is affected.
 	s.drainNotice = make(chan struct{})
 	reqBase := context.WithValue(context.WithoutCancel(parentCtx), drainNoticeKey{}, (<-chan struct{})(s.drainNotice))
+	// The dispatcher rides beside the drain notice, for HostPauseNoticeReceiver:
+	// a long-lived handler asks it for the pause notice of its request's host.
+	reqBase = context.WithValue(reqBase, hostDispatcherKey{}, s.handler)
 	s.reqCtx, s.cancelReq = context.WithCancel(reqBase)
 	s.server = s.conf.newHTTPServer(s.addr, s.handler, s.reqCtx) // fresh per cycle
 
@@ -120,7 +124,8 @@ func (s *Service) Stop(ctx context.Context) error {
 // Terminate : any → TERMINATING (irreversible). If RUNNING, full stop;
 // if STOPPING, just wait for run goroutine to exit. Fires Terminated on EVERY
 // exit path (deferred send): a missed stop deadline must still report, or
-// WaitServicesTerminated counts N-1 forever and main wedges until SIGKILL.
+// whoever waits on Terminated() counts N-1 forever and the process wedges
+// until SIGKILL.
 func (s *Service) Terminate(ctx context.Context) (err error) {
 	if s.state.Load() == svc.StateTERMINATING {
 		return nil // idempotent — returns before the defer arms
@@ -165,6 +170,50 @@ func (s *Service) waitStopped(ctx context.Context) error {
 
 func (s *Service) Terminated() <-chan error {
 	return s.terminated
+}
+
+// PauseHost pauses the host named name (HostDispatcher.Pause): its requests
+// are answered 503 HostPaused until ResumeHost and the streams open on it are
+// told to end, and nothing else about the service changes — the listener
+// stays up and every other host keeps serving.
+// retryAfter is what that 503 tells clients in Retry-After; zero tells them
+// nothing.
+//
+// A pause is independent of the lifecycle. It can be set while the service is
+// stopped, and it survives a Stop and Start; it does not survive the process
+// — a restart returns each host to how its conf says it starts
+// (Host.StartPaused).
+//
+//   - Returns: nil; an error when the service has no host of that name, or
+//     retryAfter is negative.
+func (s *Service) PauseHost(name string, retryAfter time.Duration) error {
+	if err := s.handler.Pause(name, retryAfter); err != nil {
+		return err
+	}
+	if retryAfter > 0 {
+		log.Printf("[INFO][%s] host %q paused (clients are told to retry after %v).", s.Name(), name, retryAfter)
+	} else {
+		log.Printf("[INFO][%s] host %q paused.", s.Name(), name)
+	}
+	return nil
+}
+
+// ResumeHost ends the pause of the host named name (HostDispatcher.Resume):
+// its requests are served again at once.
+//
+//   - Returns: nil; an error when the service has no host of that name.
+func (s *Service) ResumeHost(name string) error {
+	if err := s.handler.Resume(name); err != nil {
+		return err
+	}
+	log.Printf("[INFO][%s] host %q resumed.", s.Name(), name)
+	return nil
+}
+
+// HostStates reports every host of the service and whether it is paused, in
+// host-name order: a snapshot for an operator's status, not a handle.
+func (s *Service) HostStates() []HostState {
+	return s.handler.HostStates()
 }
 
 func (s *Service) run() {

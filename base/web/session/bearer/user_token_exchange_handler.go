@@ -24,7 +24,7 @@ import (
 // App side registers it like:
 //
 //	router.Handle("POST <path>", &bearer.UserTokenExchangeHandler{
-//	    SessionManager: app.SessionService.BearerSessionManager,
+//	    SessionManager: <bearer session manager>,
 //	    UserClaim:      "<claim>",
 //	    ParseUser:      func(v any) (string, error) { ... },
 //	})

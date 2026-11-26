@@ -11,8 +11,7 @@ import (
 // token-refresh request) are stored in a typed registry, keyed by per-
 // session-data-type keys defined in each session package. Access via the
 // generic SetRefreshSideloader / GetRefreshSideloader primitives; session
-// packages wrap these with typed setters/getters (e.g.
-// bearer.SetUserRefreshSideloader).
+// packages wrap these with typed setters/getters.
 type Client struct {
 	*http.Client
 	ID   string // internal ID

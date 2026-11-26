@@ -19,26 +19,34 @@ const (
 )
 
 // FlowManager issues and consumes flow tickets. The cipher seals tickets
-// under a context bound to the issuing app's name and the flow cookie: a
-// ticket value moved anywhere else stops decrypting.
+// under a context bound to the issuing app's name, the host's name and the
+// flow cookie: a ticket value moved anywhere else stops decrypting.
+//
+// A FlowManager is ONE HOST's. A flow leaves from a host and returns to that
+// same host — the flow cookie is host-only — so a ticket is that host's, and
+// an app has one FlowManager per host that offers a browser-mediated login.
 type FlowManager struct {
-	appName string
-	Cipher  security.EncodedCipher
+	appName  string
+	hostName string // the name of the host this manager's tickets belong to
+	Cipher   security.EncodedCipher
 }
 
-// NewFlowManager builds a FlowManager for the app named appName, sealing
-// tickets with cipher. The app's name is sealed here: every ticket's cipher
-// context derives from it, so every instance of the app must carry the same
-// one, and nothing may change it after construction. Neither argument may be
-// empty.
-func NewFlowManager(appName string, cipher security.EncodedCipher) (*FlowManager, error) {
+// NewFlowManager builds the FlowManager of the host named hostName, for the
+// app named appName, sealing tickets with cipher. The two names are sealed
+// here: every ticket's cipher context derives from them, so every instance of
+// the app must carry the same ones, and nothing may change them after
+// construction. No argument may be empty.
+func NewFlowManager(appName, hostName string, cipher security.EncodedCipher) (*FlowManager, error) {
 	if appName == "" {
 		return nil, errors.New("authn.NewFlowManager: appName required")
+	}
+	if hostName == "" {
+		return nil, errors.New("authn.NewFlowManager: hostName required")
 	}
 	if cipher == nil {
 		return nil, errors.New("authn.NewFlowManager: cipher required")
 	}
-	return &FlowManager{appName: appName, Cipher: cipher}, nil
+	return &FlowManager{appName: appName, hostName: hostName, Cipher: cipher}, nil
 }
 
 // FlowTicket carries the secrets born at a flow's initiate step and consumed
@@ -123,7 +131,7 @@ func (m *FlowManager) ConsumeTicket(w http.ResponseWriter, r *http.Request, retu
 }
 
 func (m *FlowManager) cipherContext() security.CipherContext {
-	return security.CipherContext{App: m.appName, Location: FlowCookieName}
+	return security.CipherContext{App: m.appName, Host: m.hostName, Location: FlowCookieName}
 }
 
 func clearFlowCookie(w http.ResponseWriter) {

@@ -9,6 +9,7 @@ import (
 	"github.com/x64c/pola/base/errs"
 	"github.com/x64c/pola/base/framework"
 	"github.com/x64c/pola/base/kvdbs"
+	"github.com/x64c/pola/base/web"
 	"github.com/x64c/pola/base/web/responses"
 	"github.com/x64c/pola/base/web/session"
 	"github.com/x64c/pola/base/web/session/cookie"
@@ -39,38 +40,68 @@ type CookieUserSession[UID comparable] struct {
 
 func (m *CookieUserSession[UID]) Wrap(inner http.Handler) (http.Handler, error) {
 	appCore := m.AppProvider().AppCore()
-	// Wrap runs at boot, before StartServices admits anything, so the manager
-	// is reached on the NODE plane — the handle would refuse Get() here. The
-	// per-request gate below still asks the handle.
-	sessSvc, _ := appCore.SessionHandle().Node().Service().(*session.Service)
-	if sessSvc == nil || sessSvc.CookieSessionManager == nil {
-		return nil, fmt.Errorf("CookieUserSession: cookie session manager missing — prepare it before wiring this middleware")
-	}
-	sessHandle := appCore.SessionHandle()
-	mgr := sessSvc.CookieSessionManager
+	return &cookieUserSessionHandler[UID]{m: m, appCore: appCore, sessHandle: appCore.SessionHandle(), inner: inner}, nil
+}
 
-	var authHandler http.Handler
+// cookieUserSessionHandler is one mounted CookieUserSession: for each host it
+// serves, that host's cookie session manager and the authenticating handler
+// its expiry mode calls for.
+type cookieUserSessionHandler[UID comparable] struct {
+	m          *CookieUserSession[UID]
+	appCore    *framework.Core
+	sessHandle framework.ServiceHandle[*session.Service]
+	inner      http.Handler
+	hosts      perHost[cookieUserSessionOfHost]
+}
+
+// cookieUserSessionOfHost is what cookieUserSessionHandler holds for one host.
+type cookieUserSessionOfHost struct {
+	mgr  *cookie.SessionManager
+	auth http.Handler // authenticates against mgr, then calls the handler behind
+}
+
+var _ web.HostBinder = (*cookieUserSessionHandler[string])(nil)
+
+// BindHost takes host's cookie session manager and builds the handler that
+// authenticates against it: on a router that serves two hosts, each host's
+// requests are authenticated against that host's sessions.
+func (h *cookieUserSessionHandler[UID]) BindHost(host *web.Host) error {
+	mgr, err := cookieSessionManagerOfHost(h.appCore, host, "CookieUserSession")
+	if err != nil {
+		return err
+	}
+	if mgr.Conf.UserSession == nil {
+		return fmt.Errorf("CookieUserSession: host %q has no \"user\" shape in .web-cookie-session.json", host.Name)
+	}
+	var auth http.Handler
 	switch mgr.Conf.UserSession.ExpireMode {
 	case cookie.ExpireAbsolute:
-		authHandler = m.absoluteExpHandler(inner, mgr)
+		auth = h.m.absoluteExpHandler(h.inner, mgr)
 	case cookie.ExpireSliding:
-		authHandler = m.slidingExpHandler(inner, mgr)
+		auth = h.m.slidingExpHandler(h.inner, mgr)
 	default:
 		// Unreachable with valid config — ExpireMode is validated at PrepareCookieSessions.
-		return nil, fmt.Errorf("CookieUserSession: invalid cookie session expiration mode %q", mgr.Conf.UserSession.ExpireMode)
+		return fmt.Errorf("CookieUserSession: invalid cookie session expiration mode %q", mgr.Conf.UserSession.ExpireMode)
 	}
+	h.hosts.bind(host, cookieUserSessionOfHost{mgr: mgr, auth: auth})
+	return nil
+}
 
-	// Gate: reject when the cookie protocol isn't serving. Lifecycle comes from
-	// the framework handle (un-admitted = stopped, terminating, or never
-	// wired); the protocol's own on/off switch stays the manager's. Additive
-	// protocol → can't attach identity → 503.
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if _, ok := sessHandle.Get(); !ok || !mgr.Enabled() {
-			responses.WriteErrorJSON(w, http.StatusServiceUnavailable, errs.SessionServiceUnavailable.WithDetail("cookie user session"))
-			return
-		}
-		authHandler.ServeHTTP(w, r)
-	}), nil
+// ServeHTTP gates, then authenticates. Gate: reject when the cookie protocol
+// isn't serving. Lifecycle comes from the framework handle (un-admitted =
+// stopped, terminating, or never wired); the protocol's own on/off switch
+// stays the manager's. Additive protocol → can't attach identity → 503.
+func (h *cookieUserSessionHandler[UID]) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	of, ok := h.hosts.forRequest(r)
+	if !ok {
+		refuseUnbound(w, r, "CookieUserSession")
+		return
+	}
+	if _, ok := h.sessHandle.Get(); !ok || !of.mgr.Enabled() {
+		responses.WriteErrorJSON(w, http.StatusServiceUnavailable, errs.SessionServiceUnavailable.WithDetail("cookie user session"))
+		return
+	}
+	of.auth.ServeHTTP(w, r)
 }
 
 func (m *CookieUserSession[UID]) authenticateCookieSession(

@@ -16,7 +16,7 @@ import (
 // can't replay against the upstream. Each value is bound to its rowKey + field
 // as cipher context, so a ciphertext copied to any other row or field no longer
 // decrypts. The cipher is required — a nil Hub or nil TokenCipher means the app
-// didn't configure token_cipher in .fwupstream-web.json, so these return
+// didn't configure token_cipher in its Conf, so these return
 // UpstreamTokenCipherNotSet rather than storing plaintext.
 
 // FetchAccessToken reads and decrypts the upstream access token for clientID

@@ -30,20 +30,21 @@ The framework lifecycle (`Start`/`Stop`/`Terminate`) controls **only #2**.
 #1 persists across `Stop`/`Start` cycles — the same registered commands
 are immediately invokable after a restart.
 
-## Prepare
+## Construct
 
-`Core.PrepareUDSService(commands)`:
-- Reads `.uds.json` — socket path, socket mode (octal string), per-line read
-  cap. Every field is required-explicit; a missing or incoherent value is a
-  named boot refusal (`Conf.Validate`).
-- Constructs the `CommandStore`, registers the supplied command set.
-- Constructs the Service (`NewService`) embedding the store.
-- Registers the Service with `Core.RegisterService`, which places it in the
-  composition graph the start and terminate walks follow.
+`NewService(conf, cmdStore)` (`NewServiceAs(name, conf, cmdStore)` to name
+the instance):
+- `conf` (`Conf`) states the socket path, the socket mode (octal string) and
+  the per-line read cap. Every field is required-explicit; a missing or
+  incoherent value is a named refusal (`Conf.Validate`), which the caller
+  runs before constructing.
+- `cmdStore` is the `CommandStore` holding the command set
+  (`NewCommandStore(handlers...)`).
+- The Service embeds the store. It binds nothing: that is `Start`'s.
 
-After `Prepare`, the `CommandStore` is fully populated and queryable
-(`GetHandler(name)`, `PrintHelp(w)`), but nothing serves it — `Start`
-provides the access channel.
+Once the Service is constructed, the `CommandStore` is fully populated and
+queryable (`GetHandler(name)`, `PrintHelp(w)`), but nothing serves it —
+`Start` provides the access channel.
 
 ## Start()
 
@@ -107,8 +108,8 @@ unreachable.
 Same flow as `Stop()` (cancel + waitStopped), plus:
 - Terminal: state stays `TERMINATING`. The service cannot be `Start`ed
   again in this process lifetime.
-- Fires the framework's `Terminated` channel so
-  `Core.WaitServicesTerminated` can count this service as done.
+- Fires its `Terminated()` channel, so whoever waits on it can count this
+  service as done.
 
 The `CommandStore` and the (now-removed) socket file are reclaimed at
 process exit — no UDS-specific cleanup beyond what `Stop` already does.

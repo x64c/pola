@@ -17,8 +17,8 @@ import (
 // by its own client only — the session row's client id must equal the
 // identity's Subject.
 //
-// Reads a JSON body {"access_token": "..."} — apply BodyLimit as for the
-// refresh handler. Idempotent: an unknown or already-dead token answers
+// Reads a JSON body {"access_token": "..."} — cap the body's size in front of
+// it, as for the refresh handler. Idempotent: an unknown or already-dead token answers
 // {"revoked": false}; a destroyed one {"revoked": true}. Refusals: 500
 // DataMissingInContext (no identity in context), 400 JSONUnmarshalFailed /
 // AccessTokenNotFound (body malformed / token empty), 403
@@ -27,7 +27,7 @@ import (
 // App side registers it like:
 //
 //	router.Handle("DELETE <path>", &bearer.TokenRevokeHandler{
-//	    SessionManager: app.SessionService.BearerSessionManager,
+//	    SessionManager: <bearer session manager>,
 //	})
 type TokenRevokeHandler struct {
 	SessionManager *SessionManager

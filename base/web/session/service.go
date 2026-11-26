@@ -14,8 +14,11 @@ import (
 
 // Service is the framework's session-management service. It holds the locking
 // manager the session managers share and the optional per-flavor session
-// managers (bearer, cookie). Each manager is set by its own Prepare* method at
-// boot; nil means the app doesn't use that flavor.
+// managers (bearer, cookie). Each manager is attached at boot by whoever wires
+// the app; nil means the app doesn't use that flavor. Bearer sessions are the
+// app's — a token is a client's, whatever host it is presented to — so there
+// is one bearer manager. Cookie sessions are a host's, so there is one cookie
+// manager per host that has them.
 //
 // Service runs nothing in the background: the locking manager keeps only what
 // is held right now (see base/locking), so this service's lifecycle is the
@@ -31,7 +34,12 @@ type Service struct {
 	// Per-protocol managers. Each owns its own enable/disable toggle (it
 	// satisfies Switchable) and is nil if the app doesn't wire that protocol.
 	BearerSessionManager *bearer.SessionManager
-	CookieSessionManager *cookie.SessionManager
+
+	// CookieSessionManagers is the cookie manager of each host that has cookie
+	// sessions, keyed by the host's name (web.Host.Name); a host without them
+	// has no entry. Filled at boot, one host at a time, and only read after
+	// that.
+	CookieSessionManagers map[string]*cookie.SessionManager
 }
 
 func (s *Service) Name() string {

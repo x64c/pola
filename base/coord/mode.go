@@ -4,11 +4,11 @@ import "fmt"
 
 // Mode is an app's coordination identity: where the state its instances
 // must agree on — locks, caps, replay caches, throttle budgets — lives, and
-// so who contends for it. It is read once, from the app's .core.json
-// ("coord_mode": "inproc" | "crossproc"), at framework.NewCore, and derived
-// from everywhere else: each Prepare* reads it and seats the matching
-// implementation, so no seat can disagree with the mode. The zero value is
-// not a mode; no app gets one by omission.
+// so who contends for it. It is declared once, in the app's conf ("inproc" or
+// "crossproc", see ParseMode), and derived from everywhere else: whatever
+// seats an implementation of that state reads the mode and seats the matching
+// one, so no seat can disagree with it. The zero value is not a mode; no app
+// gets one by omission.
 //
 // Together with the app's name it says what an instance belongs to: the
 // processes running under CrossProc with the same app name against the same
@@ -18,7 +18,7 @@ import "fmt"
 type Mode int
 
 const (
-	_ Mode = iota // zero = undeclared, refused at NewCore
+	_ Mode = iota // zero = undeclared; an app is refused at boot rather than run with it
 
 	// InProc: coordination state lives in process memory; the contenders are
 	// the goroutines of one process. Launching a second instance of an InProc
@@ -34,7 +34,7 @@ const (
 	CrossProc
 )
 
-// ParseMode reads a mode as .core.json spells it: "inproc" or "crossproc".
+// ParseMode reads a mode as a conf spells it: "inproc" or "crossproc".
 // Anything else, the empty string included, is an error — a mode is a
 // choice, never a default.
 func ParseMode(s string) (Mode, error) {

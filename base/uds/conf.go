@@ -6,10 +6,9 @@ import (
 	"strconv"
 )
 
-// Conf is the UDS service's configuration, loaded from config/.uds.json by
-// framework.PrepareUDSService. Every field is REQUIRED-explicit: this is the
-// operator surface, and the framework refuses boot rather than pick one of
-// its values on the deployment's behalf.
+// Conf is the UDS service's configuration. Every field is REQUIRED-explicit:
+// this is the operator surface, and the framework refuses boot rather than
+// pick one of its values on the deployment's behalf.
 type Conf struct {
 	// SocketPath is where the socket file is created. REQUIRED. Placement is
 	// the deployment's choice; note that DELETION rights on a Unix file live

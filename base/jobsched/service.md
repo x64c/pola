@@ -13,18 +13,20 @@ This service consists of 2 things:
    dispatches due jobs in worker goroutines, and recovers from panics.
 
 The framework lifecycle (`Start`/`Stop`/`Terminate`) controls **only #2**.
-#1 is available from the moment `Prepare` returns and stays available for
-the lifetime of the process.
+#1 is available from the moment the Service is constructed and stays
+available for the lifetime of the process.
 
-## Prepare
+## Construct
 
-`Core.PrepareJobSchedulerService()`:
-- Constructs the Service (`NewService`).
+`NewService(coordMode, perAppJobLedgerProvider)` (`NewServiceAs(name, …)` to
+name the instance):
+- `coordMode` is the app's coordination mode, which a job's `Scope` is read
+  against. An undeclared mode is refused.
+- `perAppJobLedgerProvider` is where the ledger for `OncePerApp` jobs comes
+  from. It is asked only if such a job is ever registered.
 - Initialises empty `oneTimeJobs` and `cronJobs` maps.
-- Registers the Service with `Core.RegisterService`, which places it in the
-  composition graph the start and terminate walks follow.
 
-After `Prepare`:
+Once the Service is constructed:
 - The app may call `UseDefaultLoggers()` to wire default logging callbacks
   for added/finished events.
 - The app registers jobs via `AddOneTimeJob` / `AddCronJob` — these do
@@ -96,8 +98,8 @@ jobs added during the pause) become eligible to fire on the next tick.
 Same flow as `Stop()` (cancel + graceful `wg.Wait`), plus:
 - Terminal: state stays `TERMINATING`. The service cannot be `Start`ed
   again in this process lifetime.
-- Fires the framework's `Terminated` channel so
-  `Core.WaitServicesTerminated` can count this service as done.
+- Fires its `Terminated()` channel, so whoever waits on it can count this
+  service as done.
 
 No scheduler-specific resources to release — the job maps and any
 pending entries are reclaimed by GC at process exit. Jobs that hadn't

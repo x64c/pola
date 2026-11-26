@@ -29,7 +29,7 @@ func (sd *AnonymousSessionData) UpstreamAccessSlots() *fwupstream.TknSlots { ret
 func (sd *AnonymousSessionData) UpstreamRefreshSlots() *fwupstream.TknSlots { return &sd.upRTknSlots }
 
 // HoldUpstreamRefresh runs fn holding this session's upstream refresh, on
-// the manager shared with session.Service. Named by the row key — the same
+// the session manager's locking manager. Named by the row key — the same
 // value UpstreamRowKey computes — so every request on this session holds the
 // same name. Refused at once while another request holds it.
 func (sd *AnonymousSessionData) HoldUpstreamRefresh(ctx context.Context, fn func(ctx context.Context) error) error {

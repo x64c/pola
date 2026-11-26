@@ -28,6 +28,7 @@ import (
 	"github.com/x64c/pola/base/web/fwupstream"
 	"github.com/x64c/pola/base/web/requests"
 	"github.com/x64c/pola/base/web/session"
+	"github.com/x64c/pola/base/web/session/cookie"
 	"github.com/x64c/pola/base/web/sse"
 )
 
@@ -76,6 +77,11 @@ type Core struct {
 	sseService           *sse.Service      // PrepareSSEService
 	pubsubBroker         pubsubs.Broker    // PreparePubSubService (the INTERFACE: the app built and chose the broker)
 	actionLockingManager locking.Manager   // PrepareActionLocks, from the sealed mode; reached through ActionLockingManager
+
+	// cookieSessionConfs is .web-cookie-session.json, host name → that host's
+	// conf: loaded once, by the first PrepareCookieSessions, and compared at
+	// PrepareWebService with the hosts that were prepared.
+	cookieSessionConfs map[string]*cookie.SessionConf
 
 	// Core's own services' nodes, retained at their Prepare* so the *Handle
 	// accessors (core_handles.go) can mint gated references. nil = the app

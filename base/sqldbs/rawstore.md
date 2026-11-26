@@ -37,24 +37,27 @@ import "embed"
 var SQLFS embed.FS
 ```
 
-The resulting `embed.FS` satisfies `fs.FS` and is what gets passed to the
-framework helper below. No runtime file copying needed; no on-disk SQL
+The resulting `embed.FS` satisfies `fs.FS` and is what gets passed to
+`Client.LoadRawSQL`. No runtime file copying needed; no on-disk SQL
 directory shipped alongside the binary.
 
-## The framework helper
+## The broadcast
 
-`Core.RawSQLFSMap map[string]fs.FS` lists every SQL set the app provides.
-`PrepareSQLDBClients` then loads each FS into every registered Client under
-its name:
+An app lists every SQL set it provides once, by name, and each set is loaded
+into every Client the app has, under that name:
 
 ```go
-app.RawSQLFSMap = map[string]fs.FS{
+sets := map[string]fs.FS{
     "models":     modelsFS,
     "migrations": migrationsFS,
 }
-app.PrepareSQLDBClients(mysql.PrepareClients, pgsql.PrepareClients)
+for name, sqlFS := range sets {
+    for _, client := range clients { // every sqldbs.Client of the app
+        err := client.LoadRawSQL(name, sqlFS)
+    }
+}
 
-// Result:
+// Result, e.g. for an app with a MySQL client and a PostgreSQL client:
 //   <mysql client>: stores["models"], stores["migrations"]
 //   <pgsql client>: stores["models"], stores["migrations"]
 ```
@@ -84,16 +87,16 @@ The handler doesn't branch on which driver is which. Cross-DBMS read/write
 just works because the interfaces hide dialect details and the broadcast
 hides the store-name divergence risk.
 
-If a future setup truly needs per-Client divergent stores, bypass the helper
-and call `client.LoadRawSQL(name, fs)` directly per Client after
-`PrepareSQLDBClients` — but expect to lose parity (and the portability that
-parity gives you) at any handler that touches both Clients.
+If a future setup truly needs per-Client divergent stores, skip the broadcast
+and call `client.LoadRawSQL(name, fs)` per Client with what that Client
+should hold — but expect to lose parity (and the portability that parity
+gives you) at any handler that touches both Clients.
 
 ## File extensions — dialect filtering at load
 
 Each driver's `LoadRawSQL` walks the supplied `fs.FS` and picks only the
 files it understands. The set of recognised extensions is **defined by
-each driver impl**, not by the framework. The framework only standardises
+each driver impl**, not by this package. This package only standardises
 the fallback (`.sql`) and the override rule.
 
 | Ext           | Recognised by                | Role                              |
@@ -109,7 +112,7 @@ Examples from the current impls:
 | `.pgsql` | PostgreSQL driver | PostgreSQL-specific (`$N`, `RETURNING`, …)     |
 
 A future driver introduces its own extension (e.g. `.mssql`, `.oracle`) —
-the framework doesn't need to know.
+this package doesn't need to know.
 
 **Override rule:** the dialect-specific file always loads. `.sql` only
 loads if no dialect-specific file already exists for that key. So the same
@@ -159,6 +162,6 @@ Two traps make this worth stating rather than leaving to taste:
   identifiers bare — see the quoting rule above.
 - Add a dialect-specific override (`.<dialect>` defined by the relevant
   driver) only when dialect-specific syntax is required for that key.
-- Don't pre-filter what each Client loads — let the helper broadcast.
+- Don't pre-filter what each Client loads — let every Client load every set.
   Handlers pick by name at call time; the broadcast preserves the parity
   that cross-DBMS portability depends on.

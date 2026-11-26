@@ -96,5 +96,5 @@ up believing a row is gone when it is merely unfamiliar.
 
 ## Implementations
 
-`kvdbs/redis` is the reference implementation — 1ms precision, see its
-`TimePrecision`.
+An implementation lives in a module of its own and states its time precision
+(e.g. one over Redis: 1ms).

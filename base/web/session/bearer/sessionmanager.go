@@ -28,7 +28,7 @@ type SessionManager struct {
 	FWUpstream     *fwupstream.Hub               // upstream subsystem; token I/O delegates here. nil iff no upstream configured
 	appName        string
 	KVDB           kvdbs.DB        // holds session rows
-	lockingManager locking.Manager // set at construction; shared with session.Service; guards each session's upstream refresh
+	lockingManager locking.Manager // set at construction; shared with whatever holds this manager; guards each session's upstream refresh
 
 	enabled atomic.Bool // the bearer protocol's on/off switch (svc.Switchable)
 }
