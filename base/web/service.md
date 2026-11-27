@@ -43,11 +43,59 @@ The framework lifecycle (`Start`/`Stop`/`Terminate`) controls **only #2**.
 
 ## Hosts
 
-A `ServerConf` lists the hosts the app serves under `hosts`, each keyed by a
-name and stating its `origin`, `read_timeout_secs` and `write_timeout_secs`.
+### Hostname, authority, origin
+
+Three terms (RFC 9110):
+
+| term | parts | example | where it shows |
+|---|---|---|---|
+| hostname | hostname | `example.com` | what the `HostDispatcher` matches |
+| authority | hostname + port | `example.com:8443` | a request's `Host` header (`:authority` in HTTP/2 and 3): where the request goes TO |
+| origin | scheme + hostname + port | `https://example.com:8443` | a request's `Origin` header: where the request comes FROM |
+
+- The client builds the authority from the URL it requests: the hostname,
+  and the port when it is not the scheme's default. A browser lets no page
+  change it; any other client may send what it likes. So it chooses among
+  the hosts the app lists and proves nothing more.
+- The `HostDispatcher` dispatches on the hostname alone: it drops the port of
+  the authority, and never sees the scheme. The port says how a request
+  travelled (through a proxy's 443, or straight to the app's own port), not
+  which host it is for, and behind a proxy that ends TLS every request
+  reaches the app over plain HTTP.
+- A host has no origin: several origins (`http` and `https`, other ports)
+  can sit on one hostname. The origin is not used to dispatch.
+
+### The hosts table
+
+A `ServerConf` lists the hosts the app serves under `hosts`. Each entry is
+keyed by the word code picks the host by, and states:
+
+```json
+"hosts": {
+  "main": {
+    "hostname": "example.com",
+    "extra_hostnames": ["127.0.0.1", "localhost"],
+    "read_timeout_secs": 30,
+    "write_timeout_secs": 60
+  }
+}
+```
+
+- `hostname` (required): the name the host really has, as a request's
+  authority gives it once the port is dropped. Lowercase (an international
+  name in its punycode form); no scheme, no port, no trailing dot; an IPv6
+  address without brackets.
+- `extra_hostnames` (optional): other hostnames that reach the same host. A
+  request under any of them is the host's request: the same handler, the
+  same deadlines, paused and resumed with the host. Code names only the host;
+  the extra hostnames come from the conf. They are extra ways in and nothing
+  more.
+- A hostname may be listed once, and may lead to one host only, or the boot
+  fails naming both places it is written.
+
 An app that serves one host has one entry.
 
-At boot, code picks each host by its name and says which handler serves it:
+At boot, code picks each host by its key and says which handler serves it:
 
 ```go
 host, err := conf.Host("main") // the entry "main" under "hosts"
@@ -67,17 +115,25 @@ service := web.NewService(dispatcher, conf)
   each host the handler stands under, and an error fails the boot, naming the
   host. Such a handler serves each request as the host the dispatcher chose
   for it (`web.RequestHost(r)`), so under several hosts it is right for each.
-- A host's handler never matches on the Host itself: the dispatcher has done
-  it by the time the handler runs.
+- A host's handler never matches on the hostname itself: the dispatcher has
+  done it by the time the handler runs.
 
-The `HostDispatcher` is what the server runs. Per request it reads the Host
-(port dropped, lowercased, one trailing dot dropped — never
-`X-Forwarded-Host`), picks the host with that host name, sets that host's
-deadlines, and calls its handler. A Host that is no listed host is answered
-421 Misdirected Request: the hosts of the conf are the app's Host allowlist,
-and nothing catches the rest. A name the app is to answer to — a loopback
-address a local check calls it by, say — is listed as a host like any
-other (`"origin": "http://127.0.0.1:<port>"`), with its own handler.
+The `HostDispatcher` is what the server runs. Per request it takes the
+hostname of the authority (the `Host` header; port dropped, lowercased, one
+trailing dot dropped — never `X-Forwarded-Host`), picks the host whose
+`hostname` or one of whose `extra_hostnames` that is, sets that host's
+deadlines, and calls its handler. A hostname that is none of these is
+answered 421 Misdirected Request: the hosts of the conf and their hostnames
+are the app's allowlist, and nothing catches the rest. A hostname the app is
+to answer to — a loopback address a local caller uses, say — is listed in one
+of two ways:
+
+- as an extra hostname of the host it is to reach
+  (`"extra_hostnames": ["127.0.0.1"]`), when it is to be served exactly as
+  that host;
+- as the `hostname` of a host of its own, with its own handler, when it is
+  to be served differently: other routes, or a value that must differ by
+  hostname.
 
 ### Pausing a host
 

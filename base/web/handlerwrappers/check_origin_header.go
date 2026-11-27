@@ -3,6 +3,7 @@ package handlerwrappers
 import (
 	"fmt"
 	"net/http"
+	"strings"
 
 	"github.com/x64c/pola/base/errs"
 	"github.com/x64c/pola/base/web"
@@ -19,14 +20,25 @@ import (
 // The name is literal: it checks the Origin HEADER specifically — not an
 // abstract "same-origin" guarantee. There is no Referer fallback (see below).
 //
-// Allowlist: the origin of the host serving the request — the "origin" of
-// that host's entry in .web-server.json. It is told, at boot, every host its
-// router is listed under (web.HostBinder), and each request is checked
-// against the origin of the host the request is for: on a router that serves
-// two hosts it allows each host's own origin on that host's requests, and
-// never the other's. ExtraOrigins adds additional allowed origins on every
-// host (e.g. legacy hostnames during a migration, or another of the app's
-// own hosts that posts here).
+// What it allows:
+//
+//	hostname in Origin header == hostname in Host header   → the request's own page: allowed
+//	Origin header in AlsoAllow (exact)                     → allowed
+//	otherwise, or no Origin header                         → 403
+//
+// The two hostnames are compared as web.AuthorityHostname gives them (port
+// dropped, lowercase, one trailing dot dropped); neither the scheme nor the
+// port is compared. The hostname is the boundary that matters here: a cookie
+// is scoped by hostname, not by port or scheme. The check needs nothing but
+// the request itself, so it holds the same under any hostname a request comes
+// in under, on any router.
+//
+// AlsoAllow: origins allowed IN ADDITION to the request's own hostname —
+// pages on other hostnames that may send these requests (e.g. a form on
+// another of the app's hosts, or on a sibling site, that posts here). Each
+// entry is an origin as a browser sends it (web.ValidateOrigin) and is
+// compared exactly, scheme and port included; anything else, or an entry
+// listed twice, fails the route's registration, since it could never match.
 //
 // Method scope:
 //   - Default (Strict=false): safe methods (GET, HEAD, OPTIONS) pass through
@@ -61,48 +73,40 @@ import (
 // tools) can forge the Origin header — this middleware only constrains
 // browser-driven requests. That's exactly the CSRF threat model (the browser
 // is the unwitting attack vehicle). Pair with CSRFToken for defense-in-depth:
-// CSRFToken proves the request body was rendered by our origin's DOM,
-// CheckOriginHeader proves the request was initiated from our origin.
+// CSRFToken proves the request body was rendered by our own page,
+// CheckOriginHeader proves the request was initiated from our own hostname.
 //
 // Scope it to cookie-session route groups (where CSRF applies). Bearer-token
 // JSON APIs don't need it — tokens aren't auto-attached cross-origin.
-//
-// A host's "origin" is required by .web-server.json, so a missing one is a
-// boot failure before this middleware is ever wired.
 type CheckOriginHeader struct {
-	ExtraOrigins []string
-	Strict       bool // true = check all methods incl. GET/HEAD/OPTIONS. Default false = skip safe methods.
+	AlsoAllow []string // origins allowed in addition to the request's own hostname; see AlsoAllow above
+	Strict    bool     // true = check all methods incl. GET/HEAD/OPTIONS. Default false = skip safe methods.
 }
 
 func (m *CheckOriginHeader) Wrap(inner http.Handler) (http.Handler, error) {
-	for _, o := range m.ExtraOrigins {
-		if o == "" {
-			return nil, fmt.Errorf(`CheckOriginHeader: "" is not an origin — remove it from ExtraOrigins`)
+	seen := make(map[string]int, len(m.AlsoAllow))
+	for i, o := range m.AlsoAllow {
+		if err := web.ValidateOrigin(o); err != nil {
+			return nil, fmt.Errorf("CheckOriginHeader: AlsoAllow[%d]: %w", i, err)
 		}
+		if first, dup := seen[o]; dup {
+			return nil, fmt.Errorf("CheckOriginHeader: AlsoAllow[%d] repeats %q, already AlsoAllow[%d]: list each origin once", i, o, first)
+		}
+		seen[o] = i
 	}
-	return &checkOriginHandler{m: m, inner: inner}, nil
+	allowed := make(map[string]struct{}, len(m.AlsoAllow))
+	for _, o := range m.AlsoAllow {
+		allowed[o] = struct{}{}
+	}
+	return &checkOriginHandler{m: m, inner: inner, alsoAllowed: allowed}, nil
 }
 
-// checkOriginHandler is one mounted CheckOriginHeader: the allowlist of each
-// host it serves, and the handler behind it.
+// checkOriginHandler is one mounted CheckOriginHeader and the handler behind
+// it.
 type checkOriginHandler struct {
-	m       *CheckOriginHeader
-	inner   http.Handler
-	allowed perHost[map[string]struct{}]
-}
-
-var _ web.HostBinder = (*checkOriginHandler)(nil)
-
-// BindHost builds the allowlist for host: its own origin and ExtraOrigins.
-// The origin needs no check here: .web-server.json requires it, so the conf
-// has already refused the boot if it is unusable.
-func (h *checkOriginHandler) BindHost(host *web.Host) error {
-	set := map[string]struct{}{host.Origin: {}}
-	for _, o := range h.m.ExtraOrigins {
-		set[o] = struct{}{}
-	}
-	h.allowed.bind(host, set)
-	return nil
+	m           *CheckOriginHeader
+	inner       http.Handler
+	alsoAllowed map[string]struct{} // AlsoAllow, as a set
 }
 
 func (h *checkOriginHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -110,21 +114,29 @@ func (h *checkOriginHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.inner.ServeHTTP(w, r)
 		return
 	}
-	set, ok := h.allowed.forRequest(r)
-	if !ok {
-		refuseUnbound(w, r, "CheckOriginHeader")
-		return
-	}
 	origin := r.Header.Get("Origin")
-	// Missing Origin always fails closed — independent of allowlist contents.
+	// Missing Origin always fails closed — independent of AlsoAllow.
 	if origin == "" {
 		responses.WriteErrorJSON(w, http.StatusForbidden, errs.OriginNotAllowed.WithDetail("missing Origin header"))
 		return
 	}
 	// Origin only — no Referer fallback.
-	if _, ok := set[origin]; !ok {
+	if _, also := h.alsoAllowed[origin]; !also && !ownPage(origin, r) {
 		responses.WriteErrorJSON(w, http.StatusForbidden, errs.OriginNotAllowed.WithDetail("origin: "+origin))
 		return
 	}
 	h.inner.ServeHTTP(w, r)
+}
+
+// ownPage reports whether origin, a request's Origin header, names a page on
+// the hostname the request was sent to: hostname in Origin header == hostname
+// in Host header. An Origin that is not scheme://authority with scheme http or
+// https and nothing after — "null" among them — names no page of ours.
+func ownPage(origin string, r *http.Request) bool {
+	scheme, authority, ok := strings.Cut(origin, "://")
+	if !ok || (scheme != "http" && scheme != "https") || authority == "" || strings.ContainsAny(authority, "/?#@") {
+		return false
+	}
+	hostname := web.AuthorityHostname(authority)
+	return hostname != "" && hostname == web.AuthorityHostname(r.Host)
 }

@@ -39,7 +39,7 @@ func (p *perHost[T]) forRequest(r *http.Request) (T, bool) {
 
 // refuseUnbound answers a request that reached a host-bound handler for a
 // host it was never bound to. It cannot be served as that host, and serving
-// it as another would apply the wrong host's origin or sessions, so it is
+// it as another would apply the wrong host's sessions, so it is
 // refused. Only wiring can cause it: the handler table lists something in
 // front of this handler's router that does not pass BindHost on.
 func refuseUnbound(w http.ResponseWriter, r *http.Request, who string) {

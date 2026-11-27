@@ -45,18 +45,22 @@ type ServerConf struct {
 
 	// Hosts is the hosts this app serves, keyed by the name code picks each one
 	// by (Host). REQUIRED, at least one: an app serving a single host is the
-	// one-entry case, not a different mode. No two hosts may share a host name
-	// — the port is not part of what a request's Host is matched on. A name is
+	// one-entry case, not a different mode. A host is matched by its hostname
+	// and its extra hostnames, and no hostname may lead to two hosts. A key is
 	// lowercase letters, digits, '-' and '_': it is written into what is stored
 	// per host, storage keys among it, so it may hold nothing a key gives
 	// meaning to, and renaming a host orphans what was stored under the old
-	// name.
+	// key.
 	//
-	// The table is also the app's Host allowlist, and there is no way around
-	// it: a request whose Host is none of these is refused with 421 Misdirected
-	// Request. Nothing catches the rest. A name the app is to answer to — an
-	// address a health check calls it by, a loopback address — is listed here
-	// as a host like any other, with the handler that serves it.
+	// The table is also the app's allowlist of hostnames, and there is no way
+	// around it: a request whose hostname is none of these is refused with 421
+	// Misdirected Request. Nothing catches the rest. A hostname the app is to
+	// answer to — a loopback address a caller on the same machine uses,
+	// localhost on a developer's machine — is listed, in one of two ways: as an
+	// extra hostname of the host it is to reach (Host.ExtraHostnames), when it
+	// is to be served exactly as that host; or as the hostname of a host of its
+	// own, with the handler that serves it, when it is to be served
+	// differently.
 	Hosts map[string]*Host `json:"hosts"`
 }
 
@@ -99,27 +103,36 @@ func (c ServerConf) Host(name string) (*Host, error) {
 	return h, nil
 }
 
-// hostnames validates every "hosts" entry and returns what a request's Host is
-// matched on: host name → the entry it selects. Names are walked in order, so
-// the first problem reported is the same on every run.
+// hostnames validates every "hosts" entry and returns what a request's
+// hostname is matched on: hostname → the entry it selects, for every host's
+// hostname and extra hostnames. Hosts are walked in key order, so the first
+// problem reported is the same on every run.
+//
+// A hostname may lead to one host only. Within a host validate has already
+// refused a repeat; across hosts a shared hostname is refused here, naming
+// both places it is written.
 func (c ServerConf) hostnames() (map[string]*Host, error) {
 	if len(c.Hosts) == 0 {
-		return nil, fmt.Errorf(`hosts must be set: at least one host, e.g. {"main": {"origin": "https://example.com", …}}`)
+		return nil, fmt.Errorf(`hosts must be set: at least one host, e.g. {"main": {"hostname": "example.com", …}}`)
 	}
 	byHostname := make(map[string]*Host, len(c.Hosts))
-	for _, name := range slices.Sorted(maps.Keys(c.Hosts)) {
-		if !validHostName(name) {
-			return nil, fmt.Errorf("hosts has the name %q: a host's name is lowercase letters, digits, '-' and '_', and not empty", name)
+	where := make(map[string]string, len(c.Hosts)) // hostname → the conf field it is written in
+	for _, key := range slices.Sorted(maps.Keys(c.Hosts)) {
+		if !validHostKey(key) {
+			return nil, fmt.Errorf("hosts has the key %q: a host's key is lowercase letters, digits, '-' and '_', and not empty", key)
 		}
-		h := c.Hosts[name]
-		hostname, err := h.validate(name)
+		h := c.Hosts[key]
+		hostnames, err := h.validate(key)
 		if err != nil {
 			return nil, err
 		}
-		if other, dup := byHostname[hostname]; dup {
-			return nil, fmt.Errorf("hosts.%s and hosts.%s share the host name %q: a request's Host is matched without its port, so only one of them could ever be reached", other.Name, name, hostname)
+		for _, n := range hostnames {
+			if other, dup := byHostname[n.hostname]; dup {
+				return nil, fmt.Errorf("%s and %s are the same hostname %q: it could lead to only one of hosts %q and %q", where[n.hostname], n.field, n.hostname, other.Name, key)
+			}
+			byHostname[n.hostname] = h
+			where[n.hostname] = n.field
 		}
-		byHostname[hostname] = h
 	}
 	return byHostname, nil
 }

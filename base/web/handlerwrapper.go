@@ -24,8 +24,7 @@ type HandlerWrapper interface {
 }
 
 // HostBinder is implemented by a handler that must know which host it is
-// serving — an origin check allows that host's origin, nobody else's. A
-// HostDispatcher tells it: when the dispatcher is built, every handler in its
+// serving, because it holds something per host. A HostDispatcher tells it: when the dispatcher is built, every handler in its
 // table that is a HostBinder is told each host it was given for (BindHost),
 // once per host, before any request is served.
 //

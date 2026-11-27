@@ -16,15 +16,24 @@ import (
 	"github.com/x64c/pola/base/web/responses"
 )
 
-// HostDispatcher is the handler the web service serves. It reads a request's
-// Host, picks the host of the conf it names, sets that host's deadlines on
-// the request, and hands the request to that host's handler. It routes
-// nothing itself: each host's handler has its own routing table, and nothing
-// is shared between two hosts unless the app gave both the same handler.
+// HostDispatcher is the handler the web service serves. It dispatches on the
+// HOSTNAME and on nothing else (see hostname.go for hostname, authority and
+// origin): it reads a request's authority (the Host header), drops the port,
+// picks the host whose hostname or extra hostname that is, sets that host's
+// deadlines on the request, and hands the request to that host's handler.
+// Neither the port nor the scheme decides anything, and the request's Origin
+// header is not read. It routes nothing itself: each host's handler has its
+// own routing table, and nothing is shared between two hosts unless the app
+// gave both the same handler.
 //
-// A request whose Host is no listed host goes nowhere: 421 Misdirected
+// A host is reached by its hostname (Host.Hostname) and its extra hostnames
+// (Host.ExtraHostnames). Every one of them leads to the same host: a request
+// is that host's whichever of them it came in under.
+//
+// A request whose hostname is none of these goes nowhere: 421 Misdirected
 // Request, the status for a host this server is not configured for. The
-// conf's hosts are the whole of what the dispatcher answers to.
+// conf's hosts and their hostnames are the whole of what the dispatcher
+// answers to.
 //
 // A host can be PAUSED (Pause, Resume). While it is, everything that relies on
 // the host is paused: the dispatcher answers its requests itself, 503, and
@@ -42,7 +51,7 @@ import (
 // pause is the one thing that changes — atomically — so it is safe for any
 // number of concurrent requests.
 type HostDispatcher struct {
-	byHostname map[string]*hostRoute // what a request's Host is matched on (requestHostname)
+	byHostname map[string]*hostRoute // what a request's Host is matched on (AuthorityHostname)
 	byName     map[string]*hostRoute // the same routes by host name (Host.Name), for Pause and Resume
 }
 
@@ -98,10 +107,11 @@ func (rt *hostRoute) pauseNotice() <-chan struct{} {
 
 // HostState is one host as HostStates reports it: a snapshot, not a handle.
 type HostState struct {
-	Name       string
-	Origin     string
-	Paused     bool
-	RetryAfter time.Duration // what a paused host tells clients (Retry-After); 0 = nothing
+	Name           string
+	Hostname       string
+	ExtraHostnames []string // the host's extra hostnames, in conf order; nil when it has none
+	Paused         bool
+	RetryAfter     time.Duration // what a paused host tells clients (Retry-After); 0 = nothing
 }
 
 // NewHostDispatcher builds the dispatcher for conf's hosts, each served by its
@@ -141,11 +151,14 @@ func NewHostDispatcher(conf ServerConf, handlers HostHandlers) (*HostDispatcher,
 		return nil, fmt.Errorf("web hosts: no handler for host(s) %s — every host of the conf needs one in the HostHandlers", strings.Join(missing, ", "))
 	}
 
+	// One route per host, however many hostnames reach it: a host's hostname
+	// and extra hostnames all lead to the same route, so they share its handler, its
+	// deadlines and its pause.
 	d := &HostDispatcher{
 		byHostname: make(map[string]*hostRoute, len(byHostname)),
-		byName:     make(map[string]*hostRoute, len(byHostname)),
+		byName:     make(map[string]*hostRoute, len(conf.Hosts)),
 	}
-	for hostname, h := range byHostname {
+	for name, h := range conf.Hosts {
 		rt := &hostRoute{
 			host:         h,
 			handler:      handlers[h],
@@ -156,8 +169,10 @@ func NewHostDispatcher(conf ServerConf, handlers HostHandlers) (*HostDispatcher,
 		if h.StartPaused { // the conf's word on how the host starts; Pause and Resume take it from there
 			rt.pause(0)
 		}
-		d.byHostname[hostname] = rt
-		d.byName[h.Name] = rt
+		d.byName[name] = rt
+	}
+	for hostname, h := range byHostname {
+		d.byHostname[hostname] = d.byName[h.Name]
 	}
 	// Each handler is told the hosts it serves, in host-name order so the
 	// first failure reported is the same on every run. A handler that cannot
@@ -218,21 +233,23 @@ func (d *HostDispatcher) HostStates() []HostState {
 	for _, name := range slices.Sorted(maps.Keys(d.byName)) {
 		rt := d.byName[name]
 		states = append(states, HostState{
-			Name:       name,
-			Origin:     rt.host.Origin,
-			Paused:     rt.paused.Load(),
-			RetryAfter: time.Duration(rt.retryAfterSecs.Load()) * time.Second,
+			Name:           name,
+			Hostname:       rt.host.Hostname,
+			ExtraHostnames: slices.Clone(rt.host.ExtraHostnames),
+			Paused:         rt.paused.Load(),
+			RetryAfter:     time.Duration(rt.retryAfterSecs.Load()) * time.Second,
 		})
 	}
 	return states
 }
 
-// route is the host a request naming hostport as its Host is served by: the
-// listed host of that name, or nil — no host is served under a name the conf
+// route is the host a request with this authority is served by: the host
+// whose hostname or extra hostname is the authority's hostname
+// (AuthorityHostname), or nil — no host is served under a hostname the conf
 // does not list. The one place the choice is made, so the dispatch and the
 // pause notice of a request can never come to name two hosts.
-func (d *HostDispatcher) route(hostport string) *hostRoute {
-	return d.byHostname[requestHostname(hostport)]
+func (d *HostDispatcher) route(authority string) *hostRoute {
+	return d.byHostname[AuthorityHostname(authority)]
 }
 
 // hostNameList is the dispatcher's host names for an error message.
