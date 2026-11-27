@@ -1,9 +1,9 @@
 github.com/golang-jwt/jwt/v5 v5.3.1 h1:kYf81DTWFe7t+1VvL7eS+jKFVWaUnK9cB1qbwn63YCY=
 github.com/golang-jwt/jwt/v5 v5.3.1/go.mod h1:fxCRLWMO43lRc8nhHWY6LGqRcf+1gQWArsqaEUEa5bE=
-github.com/x64c/pola/auth/jwtassert v0.2.0 h1:HtuYqsQ3SdAB2m37b6SenLnHacvEpNcAFKEEkitfIOc=
-github.com/x64c/pola/auth/jwtassert v0.2.0/go.mod h1:ualMm3EteRTfEWhuHEJvKrq0sdeWQVVaMhmG6ChRN+I=
-github.com/x64c/pola/base v0.2.0 h1:oYVlWtza8ahThwiBgN9owp8mKqYRziqa1C+Zih5h6u0=
-github.com/x64c/pola/base v0.2.0/go.mod h1:G5ZgEv0/Pr50O1Bi/vG8ILHiYnuwxHtQ7HpJTFR9tyE=
+github.com/x64c/pola/auth/jwtassert v0.3.0 h1:savSqbJj7Ao+xvk70EscE3zPX20PXSwZD+3KTLoNHXo=
+github.com/x64c/pola/auth/jwtassert v0.3.0/go.mod h1:2XYD4DlbzHzaDiDNVHUjY4B66bFF2sb1CrH2iOgJ1tY=
+github.com/x64c/pola/base v0.3.0 h1:Wz43chXVzwV6F3D/6p+GwPxv+YTEjx0PT4yalYIbES8=
+github.com/x64c/pola/base v0.3.0/go.mod h1:G5ZgEv0/Pr50O1Bi/vG8ILHiYnuwxHtQ7HpJTFR9tyE=
 golang.org/x/crypto v0.59.0 h1:xS2jhqYbzNrpvkWP2YTDf4TJwBy3ykR03i8vFDxEc7c=
 golang.org/x/crypto v0.59.0/go.mod h1:veDyUwATGs3c+vN3VfTbzViMGXeTBk3WyhBOkn+F/4U=
 golang.org/x/sys v0.50.0 h1:dkKZEFTEKaLr1sjhs0WiKqoi8Jj5nHbS3Njmx1UoMJs=
