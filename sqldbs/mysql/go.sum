@@ -1,6 +1,8 @@
 filippo.io/edwards25519 v1.2.0 h1:crnVqOiS4jqYleHd9vaKZ+HKtHfllngJIiOpNpoJsjo=
 filippo.io/edwards25519 v1.2.0/go.mod h1:xzAOLCNug/yB62zG1bQ8uziwrIqIuxhctzJT18Q77mc=
-github.com/go-sql-driver/mysql v1.10.2 h1:5TRvGvczDohUMOCRA5aCAXgfSZOo/oNDSFD/2RrChS0=
-github.com/go-sql-driver/mysql v1.10.2/go.mod h1:M+cqaI7+xxXGG9swrdeUIoPG3Y3KCkF0pZej+SK+nWk=
-github.com/x64c/pola/base v0.2.0 h1:oYVlWtza8ahThwiBgN9owp8mKqYRziqa1C+Zih5h6u0=
-github.com/x64c/pola/base v0.2.0/go.mod h1:G5ZgEv0/Pr50O1Bi/vG8ILHiYnuwxHtQ7HpJTFR9tyE=
+github.com/go-sql-driver/mysql v1.11.0 h1:0dFnuu2mR7g+8Smo/rL18y1WnTLgVrHttzSahf20Gb4=
+github.com/go-sql-driver/mysql v1.11.0/go.mod h1:evJsoGjlO/9BFsnfXyjtluDYb3OSGzPNOnUaBl/2Dao=
+github.com/klauspost/compress v1.19.2 h1:hMRETovs/pu/dVWN7zIT1PGG8t509MwT6bO7XSi26R8=
+github.com/klauspost/compress v1.19.2/go.mod h1:cwPg85FWrGar70rWktvGQj8/hthj3wpl0PGDogxkrSQ=
+github.com/x64c/pola/base v0.3.0 h1:Wz43chXVzwV6F3D/6p+GwPxv+YTEjx0PT4yalYIbES8=
+github.com/x64c/pola/base v0.3.0/go.mod h1:G5ZgEv0/Pr50O1Bi/vG8ILHiYnuwxHtQ7HpJTFR9tyE=

@@ -4,7 +4,7 @@ go 1.27.4
 
 require (
 	github.com/phpdave11/gofpdf v1.4.3
-	github.com/x64c/pola/base v0.2.0
+	github.com/x64c/pola/base v0.3.0
 )
 
 require (

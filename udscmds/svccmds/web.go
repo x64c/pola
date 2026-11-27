@@ -29,7 +29,9 @@ import (
 // said — the host stays paused until resume — and without it the header is
 // not sent: how long a pause will last is the operator's to say.
 //
-// status lists every host with its origin and whether it is paused.
+// status lists every host with its hostname, its extra hostnames if it has
+// any, and whether it is paused. A pause is the host's, so it holds for every
+// hostname the host is reached by.
 type Web struct {
 	AppProvider framework.AppProviderFunc
 	name        string // optional override; defaults to "web"
@@ -149,6 +151,10 @@ func printWebStatus(n *framework.ServiceNode, s *web.Service, w io.Writer) {
 		if n.Admitted() && !st.Paused {
 			serving = "serving"
 		}
-		_, _ = fmt.Fprintf(w, "  host[%s] %s: %s (%s)\n", st.Name, st.Origin, state, serving)
+		names := st.Hostname
+		if len(st.ExtraHostnames) > 0 {
+			names += " (extra: " + strings.Join(st.ExtraHostnames, ", ") + ")"
+		}
+		_, _ = fmt.Fprintf(w, "  host[%s] %s: %s (%s)\n", st.Name, names, state, serving)
 	}
 }

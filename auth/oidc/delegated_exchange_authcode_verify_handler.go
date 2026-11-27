@@ -35,7 +35,7 @@ import (
 //	    Providers:   <providers by client name>,
 //	    Bearer:      <bearer session manager>,
 //	    Resolve:     <uid resolver>,
-//	    Issuer:      host.Origin, // the web.Host this route is served on
+//	    Issuer:      <issuer>, // the "iss" of the ID tokens signed here
 //	    SignIDToken: <ID token signer>,
 //	    IDTokenTTL:  15 * time.Minute,
 //	}, <BearerSession gate>, <BodyLimit>)

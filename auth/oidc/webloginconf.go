@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"maps"
+	"net/url"
 	"os"
 	"path/filepath"
 	"slices"
@@ -22,13 +23,22 @@ type WebLoginConf struct {
 	RedirectURI string   `json:"redirect_uri"`
 }
 
-// Validate reports the first missing required field.
+// Validate reports the first missing required field, or a redirect_uri that
+// does not have the form of one: an absolute http or https URL with no
+// userinfo (RFC 9110 §4.2.4) and no fragment (RFC 6749 §3.1.2).
 func (c *WebLoginConf) Validate() error {
 	if err := c.Provider.Validate(); err != nil {
 		return err
 	}
 	if c.RedirectURI == "" {
 		return errors.New("oidc web login conf: redirect_uri required")
+	}
+	u, err := url.Parse(c.RedirectURI)
+	if err != nil {
+		return fmt.Errorf("oidc web login conf: redirect_uri %q is not a URL: %w", c.RedirectURI, err)
+	}
+	if (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" || u.User != nil || u.Fragment != "" || strings.Contains(c.RedirectURI, "#") {
+		return fmt.Errorf("oidc web login conf: redirect_uri %q: want an absolute http or https URL with no userinfo and no fragment", c.RedirectURI)
 	}
 	return nil
 }
@@ -51,15 +61,12 @@ const webLoginConfsFileShape = `the file is keyed by host name, then identity pr
 // not serve.
 //
 // The whole file is judged, every host's logins and not only host's: unknown
-// members are rejected and each entry validated, so a login nothing asks for
-// yet cannot sit there broken. Of host's own logins one thing more is
-// required: each redirect_uri is on host's origin — a provider that returned
-// the browser to another host would return it to where neither the flow
-// cookie nor the session it ends in exists.
+// members are rejected and each entry validated (WebLoginConf.Validate, the
+// form of its redirect_uri included), so a login nothing asks for yet cannot
+// sit there broken.
 //
 //   - Returns: host's logins; an error naming the file when it cannot be read
-//     or parsed, when an entry is invalid, when host has no logins in it, or
-//     when one of host's redirect URIs is not on host's origin.
+//     or parsed, when an entry is invalid, or when host has no logins in it.
 func LoadWebLoginConfs(appRoot string, host *web.Host) (WebLoginConfs, error) {
 	if host == nil {
 		return nil, errors.New("oidc web login confs: host required — take it from Core.WebHost")
@@ -94,11 +101,6 @@ func LoadWebLoginConfs(appRoot string, host *web.Host) (WebLoginConfs, error) {
 	confs, ok := byHost[host.Name]
 	if !ok {
 		return nil, fmt.Errorf("oidc web login confs %s: host %q has no logins (the file has: %s)", path, host.Name, strings.Join(slices.Sorted(maps.Keys(byHost)), ", "))
-	}
-	for _, id := range slices.Sorted(maps.Keys(confs)) {
-		if !strings.HasPrefix(confs[id].RedirectURI, host.Origin+"/") {
-			return nil, fmt.Errorf("oidc web login confs %s: %q/%q: redirect_uri %q is not on the host's origin %s — the provider must return the browser to the host the login left from", path, host.Name, id, confs[id].RedirectURI, host.Origin)
-		}
 	}
 	return confs, nil
 }
